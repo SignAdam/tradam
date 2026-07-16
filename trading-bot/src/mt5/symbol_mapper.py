@@ -17,13 +17,25 @@ def _normalize(value: str) -> str:
     return "".join(ch for ch in value.upper() if ch.isalnum())
 
 
+def unique_aliases(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        normalized = _normalize(value)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(value)
+    return result
+
+
 class SymbolMapper:
     def __init__(self, symbols_config: dict) -> None:
         self.symbols_config = symbols_config.get("symbols", symbols_config)
 
     def map_symbol(self, logical: str, available_symbols: list[str]) -> SymbolMapping:
         config = self.symbols_config.get(logical, {})
-        aliases = [logical, *config.get("aliases", [])]
+        aliases = unique_aliases([*config.get("aliases", []), logical])
         available_by_norm = {_normalize(symbol): symbol for symbol in available_symbols}
 
         for alias in aliases:
@@ -45,4 +57,3 @@ class SymbolMapper:
             if config.get("enabled", True):
                 mappings[logical] = self.map_symbol(logical, available_symbols)
         return mappings
-

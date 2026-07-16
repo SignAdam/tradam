@@ -137,6 +137,7 @@ class OrderManager:
             raise SafetyError("Live order blocked by ENABLE_LIVE_TRADING/LIVE_TRADING_CONFIRMATION.")
         if mt5 is None:
             raise BrokerValidationError("MetaTrader5 package is not available.")
+        self._ensure_terminal_allows_autotrading()
 
         order_type = mt5.ORDER_TYPE_BUY if request.direction.upper() == "BUY" else mt5.ORDER_TYPE_SELL
         payload = {
@@ -160,6 +161,17 @@ class OrderManager:
         if data.get("retcode") != getattr(mt5, "TRADE_RETCODE_DONE", data.get("retcode")):
             raise BrokerValidationError(f"Order rejected by MT5: {data}")
         return data
+
+    def _ensure_terminal_allows_autotrading(self) -> None:
+        terminal_info = mt5.terminal_info()
+        if terminal_info is None:
+            raise BrokerValidationError(f"MT5 terminal_info returned None: {mt5.last_error()}")
+        terminal = terminal_info._asdict() if hasattr(terminal_info, "_asdict") else dict(terminal_info)
+        if terminal.get("trade_allowed") is False:
+            raise BrokerValidationError(
+                "AutoTrading/Algo Trading is disabled in the MT5 terminal. "
+                "Enable the Algo Trading button before running demo_live."
+            )
 
     def _logical_symbol(self, broker_symbol: str) -> str:
         broker_upper = broker_symbol.upper()

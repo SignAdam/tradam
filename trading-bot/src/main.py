@@ -22,6 +22,7 @@ from src.strategy.risk_manager import RiskManager, RiskState, SymbolTradingSpec
 from src.strategy.session_filter import SessionFilter
 from src.strategy.signal_engine import SignalEngine
 from src.utils.config import enforce_live_trading_guard, load_project_config, redacted_config
+from src.utils.exceptions import BrokerValidationError
 from src.utils.logger import setup_logging
 
 
@@ -212,6 +213,18 @@ def run_scan_cycle(
                 take_profit=take_profit,
                 deviation_points=int(settings["trading"].get("max_slippage_points", 30)),
             )
+            order_validation = order_manager.validate_order(order, symbol_info=info, tick=tick)
+            if not order_validation.ok:
+                decision.decision = "REJECTED"
+                decision.rejected_reason = "ORDER_VALIDATION_FAILED"
+                decision.reasons.extend(order_validation.reasons)
+                trade_logger.log_decision(decision)
+                loggers["orders"].warning(
+                    "Order refused before send symbol=%s reasons=%s",
+                    mapping.broker_symbol,
+                    "; ".join(order_validation.reasons),
+                )
+                continue
             result = order_manager.send_order(order)
             trade_logger.log_trade(
                 TradeRecord(
@@ -240,6 +253,13 @@ def run_scan_cycle(
                     status="OPEN" if mode != "backtest" else "SIMULATED",
                     metadata={"order_result": result, "decision": decision.to_dict()},
                 )
+            )
+        except BrokerValidationError as exc:
+            loggers["orders"].warning(
+                "Broker/order validation refused %s/%s: %s",
+                logical,
+                mapping.broker_symbol,
+                exc,
             )
         except Exception as exc:  # keep scanning other symbols.
             loggers["errors"].exception("Scan failed for %s/%s: %s", logical, mapping.broker_symbol, exc)
@@ -329,4 +349,3 @@ def generate_example_report(db: Database, root: Path, config: dict[str, Any]) ->
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

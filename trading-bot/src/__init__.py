@@ -1,0 +1,2 @@
+"""Tradam scalping bot package."""
+

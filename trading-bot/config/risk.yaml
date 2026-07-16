@@ -1,0 +1,42 @@
+risk:
+  risk_per_trade_percent: 0.5
+  max_risk_per_trade_percent: 0.5
+  max_session_loss_percent: 1.5
+  max_daily_loss_percent: 3.0
+  max_drawdown_percent: 6.0
+  max_trades_per_session: 6
+  max_consecutive_losses: 3
+  min_risk_reward: 1.4
+  allow_martingale: false
+  allow_grid: false
+  allow_loss_recovery: false
+  increase_lot_after_loss: false
+  require_stop_loss: true
+  require_take_profit: true
+  close_on_abnormal_conditions: true
+
+position_sizing:
+  volume_rounding: floor
+  fallback_tick_value: 1.0
+  fallback_tick_size: 0.01
+  fallback_volume_min: 0.01
+  fallback_volume_max: 1.0
+  fallback_volume_step: 0.01
+
+execution:
+  max_slippage_points: 30
+  validate_symbol_tradable: true
+  validate_market_open: true
+  validate_margin: true
+  validate_stop_distance: true
+  reject_if_spread_above_symbol_limit: true
+  require_account_trading_allowed: true
+
+trade_management:
+  trailing_stop_enabled: true
+  trailing_atr_multiplier: 1.0
+  break_even_enabled: true
+  break_even_after_r: 0.8
+  close_on_inverse_signal: true
+  close_before_session_end: true
+

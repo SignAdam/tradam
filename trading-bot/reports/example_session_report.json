@@ -1,0 +1,46 @@
+{
+  "date": "2026-07-07",
+  "session": "US",
+  "mode": "paper",
+  "symbols_analyzed": ["XAUUSD", "BTC", "DJ30"],
+  "metrics": {
+    "trades": 1,
+    "wins": 1,
+    "losses": 0,
+    "winrate": 1.0,
+    "net_pnl": 51.0,
+    "profit_factor": "inf",
+    "max_drawdown": 0.0,
+    "expectancy": 51.0,
+    "average_risk_reward": 1.5
+  },
+  "trades_refused": 1,
+  "refusal_reasons": {
+    "ADX_TOO_LOW": 1
+  },
+  "decisions": [
+    {
+      "symbol": "XAUUSD",
+      "session": "US",
+      "direction": "BUY",
+      "score": 8,
+      "decision": "ACCEPTED",
+      "reasons": [
+        "H1 bullish trend",
+        "M5 pullback around EMA20",
+        "Price near Fibonacci 50.0% confluence",
+        "No high-impact USD news in block window"
+      ]
+    },
+    {
+      "symbol": "BTC",
+      "session": "US",
+      "direction": "BUY",
+      "score": 3,
+      "decision": "REJECTED",
+      "rejected_reason": "ADX_TOO_LOW",
+      "reasons": ["ADX too low", "Bollinger width/price too low"]
+    }
+  ]
+}
+

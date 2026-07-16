@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Example US session report</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 28px; color: #111827; }
+    table { border-collapse: collapse; width: 100%; margin: 16px 0; }
+    th, td { border: 1px solid #d1d5db; padding: 8px; text-align: left; }
+    th { background: #f3f4f6; }
+  </style>
+</head>
+<body>
+  <h1>US Session Report</h1>
+  <p>2026-07-07T14:30:00+00:00 to 2026-07-07T22:00:00+00:00 | mode: paper</p>
+  <h2>Metrics</h2>
+  <table>
+    <tr><th>trades</th><td>1</td></tr>
+    <tr><th>winrate</th><td>1.0</td></tr>
+    <tr><th>net_pnl</th><td>51.0</td></tr>
+    <tr><th>profit_factor</th><td>inf</td></tr>
+    <tr><th>max_drawdown</th><td>0.0</td></tr>
+  </table>
+  <h2>Trades</h2>
+  <table>
+    <tr><th>symbol</th><th>direction</th><th>entry</th><th>SL</th><th>TP</th><th>pnl</th><th>reason</th></tr>
+    <tr><td>XAUUSD</td><td>BUY</td><td>2361.5</td><td>2359.8</td><td>2364.05</td><td>51.0</td><td>H1 trend + EMA20 pullback + Fibonacci confluence</td></tr>
+  </table>
+  <h2>Refused Trades</h2>
+  <table>
+    <tr><th>symbol</th><th>score</th><th>reason</th></tr>
+    <tr><td>BTC</td><td>3</td><td>ADX_TOO_LOW</td></tr>
+  </table>
+</body>
+</html>
+

@@ -1,0 +1,36 @@
+timezone: Europe/Paris
+broker_timezone: Europe/Paris
+
+sessions:
+  Asian:
+    enabled: true
+    start: "00:00"
+    end: "08:30"
+    reference_markets:
+      - Tokyo
+      - Sydney
+    allow_new_trades_until_minutes_before_end: 20
+    close_positions_before_end_minutes: 10
+
+  US:
+    enabled: true
+    start: "14:30"
+    end: "22:00"
+    reference_markets:
+      - New York
+    allow_new_trades_until_minutes_before_end: 20
+    close_positions_before_end_minutes: 10
+
+low_liquidity_blocks:
+  - name: broker_rollover
+    enabled: true
+    start: "22:55"
+    end: "23:10"
+    reason: Broker rollover / spreads often widen
+  - name: pre_weekend
+    enabled: true
+    weekday: 4
+    start: "21:30"
+    end: "23:59"
+    reason: Friday late-session liquidity risk
+

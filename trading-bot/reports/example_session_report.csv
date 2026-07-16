@@ -1,0 +1,3 @@
+symbol,session,entry_time,exit_time,direction,lot,entry_price,stop_loss,take_profit,exit_price,pnl,duration_seconds,spread,timeframe,h1_trend,rsi,ema20,ema50,ema200,atr,macd,fibonacci_level,signal_reason,sentiment,status
+XAUUSD,US,2026-07-07T15:03:00+00:00,2026-07-07T15:26:00+00:00,BUY,0.02,2361.5,2359.8,2364.05,2364.05,51.0,1380,24,M5,bullish,53.4,2360.9,2354.1,2338.7,1.42,0.18,50.0%,H1 trend + EMA20 pullback + Fibonacci confluence,neutral,CLOSED
+

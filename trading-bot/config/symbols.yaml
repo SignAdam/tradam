@@ -1,0 +1,75 @@
+symbols:
+  XAUUSD:
+    enabled: true
+    asset_class: metal
+    aliases:
+      - XAUUSD
+      - XAUUSDm
+      - XAUUSD.r
+      - XAUUSD.i
+      - GOLD
+      - Gold
+    queries:
+      - XAUUSD
+      - gold
+      - USD
+      - Fed
+      - inflation
+      - CPI
+      - NFP
+      - interest rates
+    max_spread_points: 60
+    min_stop_points: 50
+    preferred_entry_timeframe: M5
+    point_value_fallback: 0.01
+
+  BTC:
+    enabled: true
+    asset_class: crypto
+    aliases:
+      - BTCUSD
+      - BTCUSDm
+      - BTCUSDT
+      - BTCUSD.r
+      - BTCUSD.pro
+      - Bitcoin
+      - BTC
+    queries:
+      - Bitcoin
+      - BTC
+      - crypto
+      - Bitcoin ETF
+      - crypto regulation
+      - Binance
+      - Coinbase
+      - Fed
+      - risk sentiment
+    max_spread_points: 5000
+    min_stop_points: 1500
+    preferred_entry_timeframe: M5
+    point_value_fallback: 1.0
+
+  DJ30:
+    enabled: true
+    asset_class: index
+    aliases:
+      - DJ30
+      - US30
+      - WallStreet30
+      - DJI
+      - DJIA
+      - US30Cash
+      - DowJones30
+    queries:
+      - Dow Jones
+      - US stocks
+      - Fed
+      - CPI
+      - NFP
+      - earnings
+      - risk sentiment
+    max_spread_points: 120
+    min_stop_points: 80
+    preferred_entry_timeframe: M5
+    point_value_fallback: 1.0
+

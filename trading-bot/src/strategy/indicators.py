@@ -138,6 +138,7 @@ def daily_pivots(df: pd.DataFrame) -> pd.DataFrame:
 
 def add_indicators(df: pd.DataFrame, config: dict | None = None) -> pd.DataFrame:
     cfg = config or {}
+    ema_trigger = int(cfg.get("ema_trigger", 9))
     ema_fast = int(cfg.get("ema_fast", 20))
     ema_mid = int(cfg.get("ema_mid", 50))
     ema_slow = int(cfg.get("ema_slow", 200))
@@ -153,6 +154,7 @@ def add_indicators(df: pd.DataFrame, config: dict | None = None) -> pd.DataFrame
 
     frame = df.copy()
     close = frame["close"].astype(float)
+    frame[f"ema_{ema_trigger}"] = ema(close, ema_trigger)
     frame[f"ema_{ema_fast}"] = ema(close, ema_fast)
     frame[f"ema_{ema_mid}"] = ema(close, ema_mid)
     frame[f"ema_{ema_slow}"] = ema(close, ema_slow)
@@ -168,5 +170,9 @@ def add_indicators(df: pd.DataFrame, config: dict | None = None) -> pd.DataFrame
         frame["vwap"] = vwap(frame)
     frame = pd.concat([frame, support_resistance(frame, sr_lookback)], axis=1)
     frame = pd.concat([frame, daily_pivots(frame)], axis=1)
+    frame["ema9_slope"] = frame[f"ema_{ema_trigger}"].diff()
+    frame["ema20_slope"] = frame[f"ema_{ema_fast}"].diff()
+    frame["adx_change"] = frame[f"adx_{adx_period}"].diff()
+    frame["atr_change"] = frame[f"atr_{atr_period}"].pct_change(fill_method=None)
+    frame["bb_width_change"] = frame["bb_width"].pct_change(fill_method=None)
     return frame
-

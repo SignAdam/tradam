@@ -9,6 +9,8 @@ from typing import Any
 
 import requests
 
+from src.news.news_client import ApiResponse, ProviderHealth
+
 
 HIGH_IMPACT_KEYWORDS = {
     "cpi",
@@ -25,6 +27,11 @@ HIGH_IMPACT_KEYWORDS = {
     "pmi",
     "retail sales",
     "inflation",
+    "rba",
+    "rbnz",
+    "australia employment",
+    "new zealand employment",
+    "china pmi",
 }
 
 
@@ -46,11 +53,15 @@ class EconomicCalendar:
     def __init__(self, config: dict[str, Any] | None = None, session: requests.Session | None = None) -> None:
         self.config = config or {}
         self.timeout = int(self.config.get("request_timeout_seconds", 8))
+        self.max_age_seconds = int(self.config.get("max_data_age_minutes", 60)) * 60
         self.session = session or requests.Session()
+        self.provider_health: list[ProviderHealth] = []
+        self._last_success: dict[str, datetime] = {}
 
     def fetch(self, start: datetime | None = None, end: datetime | None = None) -> list[EconomicEvent]:
         start = start or datetime.now(timezone.utc) - timedelta(days=1)
         end = end or datetime.now(timezone.utc) + timedelta(days=1)
+        self.provider_health = []
         events: list[EconomicEvent] = []
         events.extend(self._fmp(start, end))
         events.extend(self._finnhub(start, end))
@@ -81,16 +92,23 @@ class EconomicCalendar:
         return blocked
 
     def _fmp(self, start: datetime, end: datetime) -> list[EconomicEvent]:
+        requested = datetime.now(timezone.utc).isoformat()
         token = os.getenv("FMP_API_KEY")
         if not token:
+            self._health("Financial Modeling Prep calendar", "NOT_CONFIGURED", requested)
             return []
-        data = self._get_json(
+        response = self._get_json(
             "https://financialmodelingprep.com/api/v3/economic_calendar",
             {"from": start.date().isoformat(), "to": end.date().isoformat(), "apikey": token},
         )
-        if not isinstance(data, list):
+        if response.data is None:
+            self._failed_health("Financial Modeling Prep calendar", response, requested)
             return []
-        return [
+        data = response.data
+        if not isinstance(data, list):
+            self._health("Financial Modeling Prep calendar", "UNAVAILABLE", requested, error="Unexpected response shape")
+            return []
+        events = [
             EconomicEvent(
                 title=item.get("event", ""),
                 country=item.get("country", ""),
@@ -103,17 +121,26 @@ class EconomicCalendar:
             for item in data
             if item.get("event")
         ]
+        self._health("Financial Modeling Prep calendar", "HEALTHY" if events else "EMPTY_VALID_RESPONSE", requested, requested, event_count=len(events), freshness_seconds=0)
+        self._last_success["Financial Modeling Prep calendar"] = datetime.now(timezone.utc)
+        return events
 
     def _finnhub(self, start: datetime, end: datetime) -> list[EconomicEvent]:
+        requested = datetime.now(timezone.utc).isoformat()
         token = os.getenv("FINNHUB_API_KEY")
         if not token:
+            self._health("Finnhub calendar", "NOT_CONFIGURED", requested)
             return []
-        data = self._get_json(
+        response = self._get_json(
             "https://finnhub.io/api/v1/calendar/economic",
             {"from": start.date().isoformat(), "to": end.date().isoformat(), "token": token},
         )
+        if response.data is None:
+            self._failed_health("Finnhub calendar", response, requested)
+            return []
+        data = response.data
         rows = data.get("economicCalendar", []) if isinstance(data, dict) else []
-        return [
+        events = [
             EconomicEvent(
                 title=item.get("event", ""),
                 country=item.get("country", ""),
@@ -126,14 +153,58 @@ class EconomicCalendar:
             for item in rows
             if item.get("event")
         ]
+        self._health("Finnhub calendar", "HEALTHY" if events else "EMPTY_VALID_RESPONSE", requested, requested, event_count=len(events), freshness_seconds=0)
+        self._last_success["Finnhub calendar"] = datetime.now(timezone.utc)
+        return events
 
-    def _get_json(self, url: str, params: dict[str, Any]) -> Any:
+    def _get_json(self, url: str, params: dict[str, Any]) -> ApiResponse:
         try:
             response = self.session.get(url, params=params, timeout=self.timeout)
+            if response.status_code in {401, 403}:
+                return ApiResponse(None, "AUTH_ERROR", f"HTTP {response.status_code}")
+            if response.status_code == 429:
+                return ApiResponse(None, "RATE_LIMITED", "HTTP 429")
             response.raise_for_status()
-            return response.json()
-        except (requests.RequestException, ValueError):
-            return None
+            return ApiResponse(response.json(), "HEALTHY")
+        except requests.RequestException as exc:
+            return ApiResponse(None, "UNAVAILABLE", str(exc))
+        except ValueError as exc:
+            return ApiResponse(None, "UNAVAILABLE", f"Invalid JSON: {exc}")
+
+    def _failed_health(self, provider: str, response: ApiResponse, requested: str) -> None:
+        last_success = self._last_success.get(provider)
+        freshness = int((datetime.now(timezone.utc) - last_success).total_seconds()) if last_success else None
+        status = "STALE" if freshness is not None and freshness > self.max_age_seconds else response.status
+        self._health(
+            provider,
+            status,
+            requested,
+            last_success.isoformat() if last_success else None,
+            error=response.error,
+            freshness_seconds=freshness,
+        )
+
+    def _health(
+        self,
+        provider: str,
+        status: str,
+        requested: str,
+        successful: str | None = None,
+        event_count: int = 0,
+        error: str | None = None,
+        freshness_seconds: int | None = None,
+    ) -> None:
+        self.provider_health.append(
+            ProviderHealth(
+                provider=provider,
+                status=status,
+                last_request_utc=requested,
+                last_success_utc=successful,
+                event_count=event_count,
+                error=error,
+                freshness_seconds=freshness_seconds,
+            )
+        )
 
     @staticmethod
     def _dedupe(events: list[EconomicEvent]) -> list[EconomicEvent]:
@@ -169,4 +240,3 @@ def parse_event_time(value: str) -> datetime | None:
         return parsed.astimezone(timezone.utc)
     except ValueError:
         return None
-

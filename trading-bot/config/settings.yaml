@@ -1,20 +1,25 @@
 app:
   name: Tradam Scalping Bot
-  environment: learning
-  timezone: Europe/Paris
-  loop_seconds: 20
+  environment: demo_learning
+  display_timezone: Europe/Paris
+  signal_scan_seconds: 5
+  position_loop_seconds: 1
+  reconciliation_seconds: 5
+  heartbeat_seconds: 30
 
 trading:
-  # Allowed modes: backtest, paper, demo_live, live.
-  # Never use live as the default.
-  mode: paper
+  # Connected execution is permanently restricted to MetaTrader 5 demo accounts.
+  mode: demo_live
+  allowed_modes:
+    - demo_live
+    - backtest
   enable_live_trading: false
-  live_trading_confirmation: false
   require_demo_account: true
-  paper_fill_model: conservative
   max_slippage_points: 30
   one_position_per_symbol_direction: true
   close_positions_on_shutdown: false
+  max_simultaneous_positions: 3
+  magic: 260707
 
 mt5:
   initialize_timeout_seconds: 30
@@ -23,6 +28,9 @@ mt5:
   server: null
   path: null
   portable: false
+  # MT5 exposes tick epochs in UTC but not the terminal chart timezone.
+  # Configure this explicitly for heartbeat display; never infer Europe/Paris.
+  broker_utc_offset_minutes: 0
 
 storage:
   database_path: data/trading_bot.sqlite
@@ -38,20 +46,22 @@ logging:
   backup_count: 5
 
 strategy:
-  entry_timeframe: M5
-  confirmation_timeframe: M15
+  entry_timeframe: M1
+  validation_timeframe: M5
+  structure_timeframe: M15
   trend_timeframe: H1
   context_timeframe: H4
   history_bars:
-    M1: 800
-    M5: 600
-    M15: 400
-    H1: 300
-    H4: 200
-  score_threshold: 7
-  min_risk_reward: 1.4
-  max_open_positions_per_symbol: 1
+    M1: 1200
+    M5: 800
+    M15: 500
+    H1: 350
+    H4: 250
+  intrabar_prepared_setups: true
+  max_prepared_setup_age_minutes: 5
+  min_risk_reward: 0.8
   indicators:
+    ema_trigger: 9
     ema_fast: 20
     ema_mid: 50
     ema_slow: 200
@@ -66,31 +76,38 @@ strategy:
     support_resistance_lookback: 60
     vwap_enabled: true
   filters:
-    min_adx: 18
-    min_atr_to_price: 0.00015
-    max_atr_to_price: 0.025
-    min_bollinger_width_to_price: 0.0008
+    min_atr_to_price: 0.00008
+    max_atr_to_price: 0.035
+    min_bollinger_width_to_price: 0.00035
     avoid_range_enabled: true
-    fibonacci_tolerance_atr: 0.35
-    breakout_buffer_atr: 0.15
-    pullback_ema_tolerance_atr: 0.30
-  exits:
-    atr_stop_multiplier: 1.2
-    atr_take_profit_multiplier: 1.8
-    trailing_stop_enabled: true
-    trailing_atr_multiplier: 1.0
-    break_even_enabled: true
-    break_even_after_r: 0.8
+    fibonacci_tolerance_atr: 0.30
+    breakout_buffer_atr: 0.10
+    pullback_ema_tolerance_atr: 0.25
+    max_price_distance_from_ema20_atr: 1.20
+    adx_hard_reject: 10
+    adx_soft_penalty: 15
+    adx_full_confirmation: 20
+    adx_rising_bonus: 2.5
+  setup_identity:
+    source_candle_timeframe: M1
+    default_expiry_minutes: 8
+    require_structure_change_during_cooldown: true
+  opening_range:
+    duration_minutes: 15
+    max_extension_atr: 0.75
 
 news:
   enabled: true
   request_timeout_seconds: 8
   max_articles_per_symbol: 20
+  max_data_age_minutes: 60
   high_impact_block_before_minutes: 30
   high_impact_block_after_minutes: 30
   dangerous_sentiment_threshold: -0.45
   positive_sentiment_threshold: 0.25
   negative_sentiment_threshold: -0.25
-  fallback_when_apis_missing: unknown
   block_when_macro_news_unavailable: true
   block_btc_when_news_unavailable: false
+  block_audnzd_when_calendar_unavailable: true
+  medium_impact_score_penalty: 0.5
+  medium_impact_risk_multiplier: 0.75

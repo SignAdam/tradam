@@ -22,7 +22,14 @@ class SignalDecisionRecord:
     run_id: str | None = None
     session_id: str | None = None
     signal_id: str = field(default_factory=lambda: new_id("sig"))
-    mode: str = "paper"
+    setup_id: str | None = None
+    strategy: str | None = None
+    profile: str | None = None
+    raw_score: float | None = None
+    required_score: float | None = None
+    bonuses: list[JsonDict] = field(default_factory=list)
+    penalties: list[JsonDict] = field(default_factory=list)
+    mode: str = "demo_live"
     source: str = "bot"
     is_fixture: bool = False
     risk: JsonDict = field(default_factory=dict)
@@ -57,7 +64,11 @@ class TradeRecord:
     mt5_order_ticket: str | None = None
     mt5_deal_ticket: str | None = None
     parent_position_id: str | None = None
-    mode: str = "paper"
+    setup_id: str | None = None
+    strategy: str | None = None
+    profile: str | None = None
+    signal_score: float | None = None
+    mode: str = "demo_live"
     source: str = "bot"
     is_fixture: bool = False
     created_at_utc: str = field(default_factory=utc_now_iso)
@@ -91,9 +102,13 @@ class TradeRecord:
     tp1_close_percent: float | None = None
     tp1_actual_price: float | None = None
     tp1_pnl: float | None = None
+    tp1_volume: float | None = None
+    tp1_time: str | None = None
     tp2: float | None = None
     tp2_actual_price: float | None = None
     tp2_pnl: float | None = None
+    tp2_volume: float | None = None
+    tp2_time: str | None = None
     sl_modification_count: int = 0
     break_even_applied: bool = False
     break_even_time: str | None = None
@@ -110,6 +125,13 @@ class TradeRecord:
     max_unrealized_profit: float | None = None
     max_unrealized_loss: float | None = None
     realized_r: float | None = None
+    risk_target_amount: float | None = None
+    raw_volume: float | None = None
+    rounded_volume: float | None = None
+    estimated_loss_after_rounding: float | None = None
+    estimated_margin: float | None = None
+    order_check: JsonDict = field(default_factory=dict)
+    management_state: str = "INITIAL_RISK"
     exit_reason: str | None = None
     timeframe: str | None = None
     h1_trend: str | None = None
@@ -138,7 +160,7 @@ class NewsRecord:
     published_at: str
     run_id: str | None = None
     session_id: str | None = None
-    mode: str = "paper"
+    mode: str = "demo_live"
     is_fixture: bool = False
     provider_status: str = "UNKNOWN"
     created_at_utc: str = field(default_factory=utc_now_iso)

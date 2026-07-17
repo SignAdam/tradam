@@ -222,13 +222,74 @@ class Database:
                 updated_at_utc TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS setups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                setup_id TEXT NOT NULL,
+                run_id TEXT,
+                session_id TEXT,
+                symbol TEXT NOT NULL,
+                strategy TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                session TEXT,
+                source_candle TEXT NOT NULL,
+                structure_id TEXT NOT NULL,
+                detected_at_utc TEXT NOT NULL,
+                expires_at_utc TEXT NOT NULL,
+                executed_at_utc TEXT,
+                created_at_utc TEXT NOT NULL,
+                updated_at_utc TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS symbol_cooldowns (
+                symbol TEXT PRIMARY KEY,
+                structure_id TEXT NOT NULL,
+                outcome TEXT NOT NULL,
+                cooldown_until_utc TEXT NOT NULL,
+                updated_at_utc TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS diagnostic_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id TEXT NOT NULL,
+                run_id TEXT,
+                session_id TEXT,
+                symbol TEXT,
+                code TEXT NOT NULL,
+                timestamp_utc TEXT NOT NULL,
+                details_json TEXT,
+                created_at_utc TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS managed_positions (
+                mt5_position_id TEXT PRIMARY KEY,
+                internal_trade_id TEXT NOT NULL,
+                run_id TEXT,
+                session_id TEXT,
+                symbol TEXT NOT NULL,
+                state TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                closed INTEGER DEFAULT 0,
+                created_at_utc TEXT NOT NULL,
+                updated_at_utc TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS heartbeats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT,
+                session_id TEXT,
+                timestamp_utc TEXT NOT NULL,
+                payload_json TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_trades_entry_time ON trades(entry_time);
             CREATE INDEX IF NOT EXISTS idx_decisions_created_at ON decisions(created_at);
             CREATE INDEX IF NOT EXISTS idx_news_published_at ON news(published_at);
             """
         )
         self._migrate_v2_identity_columns()
+        self._migrate_v3_demo_live_columns()
         self._create_indexes()
+        self._create_demo_only_triggers()
         self.connection.commit()
 
     def backup(self, backup_dir: str | Path | None = None) -> Path:
@@ -249,7 +310,7 @@ class Database:
                 "mt5_order_ticket": "TEXT",
                 "mt5_deal_ticket": "TEXT",
                 "parent_position_id": "TEXT",
-                "mode": "TEXT DEFAULT 'paper'",
+                "mode": "TEXT DEFAULT 'demo_live'",
                 "source": "TEXT DEFAULT 'bot'",
                 "is_fixture": "INTEGER DEFAULT 0",
                 "created_at_utc": "TEXT",
@@ -307,7 +368,7 @@ class Database:
                 "run_id": "TEXT",
                 "session_id": "TEXT",
                 "signal_id": "TEXT",
-                "mode": "TEXT DEFAULT 'paper'",
+                "mode": "TEXT DEFAULT 'demo_live'",
                 "source": "TEXT DEFAULT 'bot'",
                 "is_fixture": "INTEGER DEFAULT 0",
                 "created_at_utc": "TEXT",
@@ -316,7 +377,7 @@ class Database:
             "news": {
                 "run_id": "TEXT",
                 "session_id": "TEXT",
-                "mode": "TEXT DEFAULT 'paper'",
+                "mode": "TEXT DEFAULT 'demo_live'",
                 "is_fixture": "INTEGER DEFAULT 0",
                 "provider_status": "TEXT DEFAULT 'UNKNOWN'",
                 "created_at_utc": "TEXT",
@@ -357,6 +418,69 @@ class Database:
             (now, now),
         )
 
+    def _migrate_v3_demo_live_columns(self) -> None:
+        columns = {
+            "trades": {
+                "setup_id": "TEXT",
+                "strategy": "TEXT",
+                "profile": "TEXT",
+                "signal_score": "REAL",
+                "tp1_volume": "REAL",
+                "tp2_volume": "REAL",
+                "tp1_time": "TEXT",
+                "tp2_time": "TEXT",
+                "risk_target_amount": "REAL",
+                "raw_volume": "REAL",
+                "rounded_volume": "REAL",
+                "estimated_loss_after_rounding": "REAL",
+                "estimated_margin": "REAL",
+                "order_check_json": "TEXT",
+                "management_state": "TEXT DEFAULT 'INITIAL_RISK'",
+            },
+            "decisions": {
+                "setup_id": "TEXT",
+                "strategy": "TEXT",
+                "profile": "TEXT",
+                "raw_score": "REAL",
+                "required_score": "REAL",
+                "bonuses_json": "TEXT",
+                "penalties_json": "TEXT",
+            },
+        }
+        for table, table_columns in columns.items():
+            existing = self._column_names(table)
+            for name, definition in table_columns.items():
+                if name not in existing:
+                    self.connection.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+        self.connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations(version, applied_at_utc) VALUES(3, ?)",
+            (utc_now_iso(),),
+        )
+
+    def _create_demo_only_triggers(self) -> None:
+        self.connection.executescript(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_runs_demo_only
+            BEFORE INSERT ON runs WHEN NEW.mode NOT IN ('demo_live', 'backtest')
+            BEGIN SELECT RAISE(ABORT, 'paper/live modes are disabled'); END;
+            CREATE TRIGGER IF NOT EXISTS trg_sessions_demo_only
+            BEFORE INSERT ON trading_sessions WHEN NEW.mode NOT IN ('demo_live', 'backtest')
+            BEGIN SELECT RAISE(ABORT, 'paper/live modes are disabled'); END;
+            CREATE TRIGGER IF NOT EXISTS trg_trades_demo_only
+            BEFORE INSERT ON trades WHEN NEW.mode NOT IN ('demo_live', 'backtest')
+            BEGIN SELECT RAISE(ABORT, 'paper/live modes are disabled'); END;
+            CREATE TRIGGER IF NOT EXISTS trg_decisions_demo_only
+            BEFORE INSERT ON decisions WHEN NEW.mode NOT IN ('demo_live', 'backtest')
+            BEGIN SELECT RAISE(ABORT, 'paper/live modes are disabled'); END;
+            CREATE TRIGGER IF NOT EXISTS trg_news_demo_only
+            BEFORE INSERT ON news WHEN NEW.mode NOT IN ('demo_live', 'backtest')
+            BEGIN SELECT RAISE(ABORT, 'paper/live modes are disabled'); END;
+            CREATE TRIGGER IF NOT EXISTS trg_reports_demo_only
+            BEFORE INSERT ON session_reports WHEN NEW.mode != 'demo_live'
+            BEGIN SELECT RAISE(ABORT, 'reports are demo_live only'); END;
+            """
+        )
+
     def _create_indexes(self) -> None:
         self.connection.executescript(
             """
@@ -372,6 +496,11 @@ class Database:
             CREATE UNIQUE INDEX IF NOT EXISTS ux_position_events_event_id ON position_events(event_id);
             CREATE UNIQUE INDEX IF NOT EXISTS ux_mt5_deals_ticket ON mt5_deals(mt5_deal_ticket);
             CREATE UNIQUE INDEX IF NOT EXISTS ux_mt5_orders_ticket ON mt5_orders(mt5_order_ticket);
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_setups_setup_id ON setups(setup_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_setups_identity ON setups(symbol, strategy, direction, session, source_candle, structure_id);
+            CREATE UNIQUE INDEX IF NOT EXISTS ux_diagnostic_event_id ON diagnostic_events(event_id);
+            CREATE INDEX IF NOT EXISTS idx_diagnostics_session_symbol ON diagnostic_events(session_id, symbol, code);
+            CREATE INDEX IF NOT EXISTS idx_managed_positions_open ON managed_positions(closed, symbol);
             """
         )
 
@@ -386,6 +515,21 @@ class Database:
         existing_internal_id = self._existing_trade_internal_id(data)
         if existing_internal_id:
             internal_trade_id = existing_internal_id
+            existing = self.connection.execute(
+                "SELECT metadata_json, entry_indicators_json, news_used_json, news_health_json FROM trades WHERE internal_trade_id = ?",
+                (existing_internal_id,),
+            ).fetchone()
+            if existing:
+                data["metadata"] = {
+                    **_safe_json(existing["metadata_json"], {}),
+                    **dict(data.get("metadata") or {}),
+                }
+                if not data.get("entry_indicators") and not data.get("indicators"):
+                    data["entry_indicators"] = _safe_json(existing["entry_indicators_json"], {})
+                if not data.get("news_used") and not data.get("news_active"):
+                    data["news_used"] = _safe_json(existing["news_used_json"], [])
+                if not data.get("news_health"):
+                    data["news_health"] = _safe_json(existing["news_health_json"], {})
         entry_price = data.get("actual_entry_price") or data.get("entry_price")
         stop_loss = data.get("initial_stop_loss") or data.get("stop_loss")
         risk_price = abs(float(entry_price) - float(stop_loss)) if entry_price is not None and stop_loss is not None else None
@@ -399,7 +543,7 @@ class Database:
             "mt5_order_ticket": _str_or_none(data.get("mt5_order_ticket")),
             "mt5_deal_ticket": _str_or_none(data.get("mt5_deal_ticket")),
             "parent_position_id": _str_or_none(data.get("parent_position_id")),
-            "mode": data.get("mode", "paper"),
+            "mode": data.get("mode", "demo_live"),
             "source": data.get("source", "bot"),
             "is_fixture": int(bool(data.get("is_fixture", False))),
             "created_at_utc": data.get("created_at_utc") or now,
@@ -478,6 +622,21 @@ class Database:
             "exit_indicators_json": _json(data.get("exit_indicators", {})),
             "news_used_json": _json(data.get("news_used", data.get("news_active", []))),
             "news_health_json": _json(data.get("news_health", {})),
+            "setup_id": data.get("setup_id"),
+            "strategy": data.get("strategy"),
+            "profile": data.get("profile"),
+            "signal_score": data.get("signal_score", data.get("score")),
+            "tp1_volume": data.get("tp1_volume"),
+            "tp2_volume": data.get("tp2_volume"),
+            "tp1_time": data.get("tp1_time"),
+            "tp2_time": data.get("tp2_time"),
+            "risk_target_amount": data.get("risk_target_amount"),
+            "raw_volume": data.get("raw_volume"),
+            "rounded_volume": data.get("rounded_volume"),
+            "estimated_loss_after_rounding": data.get("estimated_loss_after_rounding"),
+            "estimated_margin": data.get("estimated_margin"),
+            "order_check_json": _json(data.get("order_check", {})),
+            "management_state": data.get("management_state", "INITIAL_RISK"),
             "metadata_json": _json(data.get("metadata", {})),
         }
         return self._upsert("trades", row, "internal_trade_id")
@@ -503,7 +662,7 @@ class Database:
             "run_id": data.get("run_id"),
             "session_id": data.get("session_id"),
             "signal_id": data.get("signal_id") or new_id("sig"),
-            "mode": data.get("mode", "paper"),
+            "mode": data.get("mode", "demo_live"),
             "source": data.get("source", "bot"),
             "is_fixture": int(bool(data.get("is_fixture", False))),
             "created_at_utc": data.get("created_at_utc") or data.get("created_at") or now,
@@ -519,6 +678,13 @@ class Database:
             "news_json": _json(data.get("news", {})),
             "rejected_reason": data.get("rejected_reason"),
             "raw_json": _json(data.get("raw", data)),
+            "setup_id": data.get("setup_id"),
+            "strategy": data.get("strategy"),
+            "profile": data.get("profile"),
+            "raw_score": data.get("raw_score", data.get("score")),
+            "required_score": data.get("required_score"),
+            "bonuses_json": _json(data.get("bonuses", [])),
+            "penalties_json": _json(data.get("penalties", [])),
         }
         return self._upsert("decisions", row, "signal_id")
 
@@ -529,7 +695,7 @@ class Database:
             "published_at": data["published_at"],
             "run_id": data.get("run_id"),
             "session_id": data.get("session_id"),
-            "mode": data.get("mode", "paper"),
+            "mode": data.get("mode", "demo_live"),
             "is_fixture": int(bool(data.get("is_fixture", False))),
             "provider_status": data.get("provider_status", "UNKNOWN"),
             "created_at_utc": data.get("created_at_utc") or now,
@@ -580,7 +746,7 @@ class Database:
         columns = ", ".join(row.keys())
         placeholders = ", ".join(f":{key}" for key in row)
         updates = ", ".join(
-            f"{key}=excluded.{key}"
+            f"{key}=COALESCE(excluded.{key}, {table}.{key})"
             for key in row
             if key not in {"id", conflict_column, "created_at_utc"}
         )
@@ -755,6 +921,198 @@ class Database:
         }
         return self._upsert("mt5_deals", row, "mt5_deal_ticket")
 
+    def mt5_deal_exists(self, ticket: str | int) -> bool:
+        row = self.connection.execute(
+            "SELECT 1 FROM mt5_deals WHERE mt5_deal_ticket = ?", (str(ticket),)
+        ).fetchone()
+        return row is not None
+
+    def insert_mt5_order(self, order: dict[str, Any]) -> int:
+        now = utc_now_iso()
+        row = {
+            "mt5_order_ticket": str(order["mt5_order_ticket"]),
+            "mt5_position_id": _str_or_none(order.get("mt5_position_id")),
+            "run_id": order.get("run_id"),
+            "session_id": order.get("session_id"),
+            "mode": order.get("mode", "demo_live"),
+            "symbol": order.get("symbol"),
+            "direction": order.get("direction"),
+            "volume_initial": order.get("volume_initial"),
+            "volume_current": order.get("volume_current"),
+            "price_open": order.get("price_open"),
+            "sl": order.get("sl"),
+            "tp": order.get("tp"),
+            "time_setup_utc": order.get("time_setup_utc"),
+            "raw_json": _json(order.get("raw", order)),
+            "is_fixture": int(bool(order.get("is_fixture", False))),
+            "created_at_utc": order.get("created_at_utc") or now,
+            "updated_at_utc": order.get("updated_at_utc") or now,
+        }
+        return self._upsert("mt5_orders", row, "mt5_order_ticket")
+
+    def mt5_order_exists(self, ticket: str | int) -> bool:
+        row = self.connection.execute(
+            "SELECT 1 FROM mt5_orders WHERE mt5_order_ticket = ?", (str(ticket),)
+        ).fetchone()
+        return row is not None
+
+    def insert_setup(self, setup: dict[str, Any]) -> bool:
+        now = utc_now_iso()
+        cursor = self.connection.execute(
+            """
+            INSERT OR IGNORE INTO setups(
+                setup_id, run_id, session_id, symbol, strategy, direction, session,
+                source_candle, structure_id, detected_at_utc, expires_at_utc,
+                executed_at_utc, created_at_utc, updated_at_utc
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                setup["setup_id"], setup.get("run_id"), setup.get("session_id"),
+                setup["symbol"], setup["strategy"], setup["direction"], setup.get("session"),
+                setup["source_candle"], setup["structure_id"],
+                setup.get("detected_at") or setup.get("detected_at_utc") or now,
+                setup.get("expires_at") or setup.get("expires_at_utc") or now,
+                setup.get("executed_at_utc"), now, now,
+            ),
+        )
+        self.connection.commit()
+        return cursor.rowcount == 1
+
+    def get_setup(self, setup_id: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM setups WHERE setup_id = ?", (setup_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def mark_setup_executed(self, setup_id: str, executed_at_utc: str) -> None:
+        self.connection.execute(
+            "UPDATE setups SET executed_at_utc = ?, updated_at_utc = ? WHERE setup_id = ? AND executed_at_utc IS NULL",
+            (executed_at_utc, utc_now_iso(), setup_id),
+        )
+        self.connection.commit()
+
+    def latest_symbol_cooldown(self, symbol: str) -> dict[str, Any] | None:
+        row = self.connection.execute(
+            "SELECT * FROM symbol_cooldowns WHERE symbol = ?", (symbol,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def upsert_symbol_cooldown(
+        self, symbol: str, structure_id: str, outcome: str, cooldown_until_utc: str
+    ) -> None:
+        self.connection.execute(
+            """
+            INSERT INTO symbol_cooldowns(symbol, structure_id, outcome, cooldown_until_utc, updated_at_utc)
+            VALUES(?, ?, ?, ?, ?)
+            ON CONFLICT(symbol) DO UPDATE SET
+                structure_id=excluded.structure_id,
+                outcome=excluded.outcome,
+                cooldown_until_utc=excluded.cooldown_until_utc,
+                updated_at_utc=excluded.updated_at_utc
+            """,
+            (symbol, structure_id, outcome, cooldown_until_utc, utc_now_iso()),
+        )
+        self.connection.commit()
+
+    def insert_diagnostic_event(
+        self,
+        code: str,
+        run_id: str | None = None,
+        session_id: str | None = None,
+        symbol: str | None = None,
+        details: dict[str, Any] | None = None,
+        event_id: str | None = None,
+    ) -> int:
+        now = utc_now_iso()
+        return self._insert(
+            "diagnostic_events",
+            {
+                "event_id": event_id or new_id("diag"),
+                "run_id": run_id,
+                "session_id": session_id,
+                "symbol": symbol,
+                "code": code,
+                "timestamp_utc": now,
+                "details_json": _json(details or {}),
+                "created_at_utc": now,
+            },
+        )
+
+    def fetch_diagnostic_events_between(self, start: str, end: str, **filters: Any) -> list[dict[str, Any]]:
+        return self.fetch_between("diagnostic_events", "timestamp_utc", start, end, **filters)
+
+    def upsert_managed_position(self, payload: dict[str, Any], closed: bool = False) -> None:
+        now = utc_now_iso()
+        position_id = str(payload["mt5_position_id"])
+        self.connection.execute(
+            """
+            INSERT INTO managed_positions(
+                mt5_position_id, internal_trade_id, run_id, session_id, symbol, state,
+                payload_json, closed, created_at_utc, updated_at_utc
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(mt5_position_id) DO UPDATE SET
+                internal_trade_id=excluded.internal_trade_id,
+                run_id=excluded.run_id,
+                session_id=excluded.session_id,
+                symbol=excluded.symbol,
+                state=excluded.state,
+                payload_json=excluded.payload_json,
+                closed=excluded.closed,
+                updated_at_utc=excluded.updated_at_utc
+            """,
+            (
+                position_id, payload["internal_trade_id"], payload.get("run_id"),
+                payload.get("session_id"), payload["symbol"], payload.get("state", "INITIAL_RISK"),
+                _json(payload), int(closed), now, now,
+            ),
+        )
+        self.connection.commit()
+
+    def load_open_managed_positions(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT payload_json FROM managed_positions WHERE closed = 0 ORDER BY created_at_utc"
+        ).fetchall()
+        return [_safe_json(row["payload_json"], {}) for row in rows]
+
+    def insert_heartbeat(self, run_id: str, session_id: str, payload: dict[str, Any]) -> int:
+        return self._insert(
+            "heartbeats",
+            {
+                "run_id": run_id,
+                "session_id": session_id,
+                "timestamp_utc": payload.get("utc") or utc_now_iso(),
+                "payload_json": _json(payload),
+            },
+        )
+
+    def fetch_open_trades(self, mode: str = "demo_live") -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT * FROM trades WHERE mode = ? AND COALESCE(is_fixture, 0) = 0 AND status IN ('OPEN', 'PARTIALLY_CLOSED')",
+            (mode,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def update_trade_fields(self, internal_trade_id: str, fields: dict[str, Any]) -> None:
+        if not fields:
+            return
+        allowed = self._column_names("trades")
+        normalized = {key: value for key, value in fields.items() if key in allowed and key != "id"}
+        normalized["updated_at_utc"] = utc_now_iso()
+        assignments = ", ".join(f"{key} = ?" for key in normalized)
+        self.connection.execute(
+            f"UPDATE trades SET {assignments} WHERE internal_trade_id = ?",
+            [*normalized.values(), internal_trade_id],
+        )
+        self.connection.commit()
+
+    def close_trading_session(self, session_id: str) -> None:
+        now = utc_now_iso()
+        self.connection.execute(
+            "UPDATE trading_sessions SET ended_at_utc = ?, updated_at_utc = ? WHERE session_id = ?",
+            (now, now, session_id),
+        )
+        self.connection.commit()
+
     def cleanup_example_fixtures(self) -> int:
         cursor = self.connection.execute("DELETE FROM trades WHERE trade_id = 'example-001'")
         deleted = cursor.rowcount
@@ -786,6 +1144,15 @@ def _str_or_none(value: Any) -> str | None:
     if value in {None, ""}:
         return None
     return str(value)
+
+
+def _safe_json(value: Any, default: Any) -> Any:
+    if value in {None, ""}:
+        return default
+    try:
+        return json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return default
 
 
 def deduplicate_trades(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

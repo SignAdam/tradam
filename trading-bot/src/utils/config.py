@@ -1,4 +1,4 @@
-"""Configuration loading with explicit live-trading safety guards."""
+"""Configuration loading with an immutable demo-account execution guard."""
 
 from __future__ import annotations
 
@@ -62,9 +62,8 @@ def apply_env_overrides(config: dict[str, Any]) -> dict[str, Any]:
     trading["enable_live_trading"] = parse_bool(
         os.getenv("ENABLE_LIVE_TRADING"), trading.get("enable_live_trading", False)
     )
-    trading["live_trading_confirmation"] = parse_bool(
-        os.getenv("LIVE_TRADING_CONFIRMATION"),
-        trading.get("live_trading_confirmation", False),
+    trading["require_demo_account"] = parse_bool(
+        os.getenv("REQUIRE_DEMO_ACCOUNT"), trading.get("require_demo_account", True)
     )
 
     for env_name, key in {
@@ -110,20 +109,20 @@ def ensure_required_directories(config: dict[str, Any]) -> None:
 
 def enforce_live_trading_guard(config: dict[str, Any]) -> None:
     trading = config["settings"].get("trading", {})
-    mode = trading.get("mode", "paper")
+    mode = str(trading.get("mode", "demo_live")).strip()
     enable_live = parse_bool(trading.get("enable_live_trading"), False)
-    double_confirm = parse_bool(trading.get("live_trading_confirmation"), False)
+    require_demo = parse_bool(trading.get("require_demo_account"), True)
+    allowed_modes = set(trading.get("allowed_modes", ["demo_live", "backtest"]))
 
-    if mode not in {"backtest", "paper", "demo_live", "live"}:
+    if mode not in {"demo_live", "backtest"} or mode not in allowed_modes:
         raise ConfigurationError(f"Unsupported trading mode: {mode}")
-    if mode == "live" and not enable_live:
-        raise SafetyError("Live trading is blocked: ENABLE_LIVE_TRADING=false.")
-    if mode == "live" and not double_confirm:
-        raise SafetyError("Live trading requires LIVE_TRADING_CONFIRMATION=true.")
-    if enable_live and not double_confirm:
-        raise SafetyError(
-            "ENABLE_LIVE_TRADING=true also requires LIVE_TRADING_CONFIRMATION=true."
-        )
+    if enable_live:
+        raise SafetyError("Real trading is permanently disabled: ENABLE_LIVE_TRADING must be false.")
+    if not require_demo:
+        raise SafetyError("require_demo_account must remain true.")
+    trading["mode"] = mode
+    trading["enable_live_trading"] = False
+    trading["require_demo_account"] = True
 
 
 def redacted_config(config: dict[str, Any]) -> dict[str, Any]:

@@ -16,8 +16,11 @@ from src.utils.identity import new_id, utc_now_iso
 @dataclass
 class ReconciliationResult:
     imported_deals: int = 0
+    duplicate_deals: int = 0
+    imported_orders: int = 0
     imported_trades: int = 0
     updated_trades: int = 0
+    synchronized_positions: int = 0
     divergences: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
@@ -29,6 +32,8 @@ class BrokerReconciliationService:
         mode: str = "demo_live",
         broker_api: Any | None = None,
     ) -> None:
+        if mode != "demo_live":
+            raise ValueError("Broker reconciliation is demo_live only")
         self.database = database
         self.mode = mode
         self.broker_api = broker_api or mt5
@@ -50,6 +55,13 @@ class BrokerReconciliationService:
         orders = [normalize_order(order) for order in self._history_orders(start_utc, end_utc)]
         orders_by_position: dict[str, list[dict[str, Any]]] = {}
         for order in orders:
+            if order.get("mt5_order_ticket"):
+                order_present = self.database.mt5_order_exists(order["mt5_order_ticket"])
+                self.database.insert_mt5_order(
+                    {**order, "run_id": run_id, "session_id": session_id, "mode": self.mode}
+                )
+                if not order_present:
+                    result.imported_orders += 1
             if order.get("mt5_position_id"):
                 orders_by_position.setdefault(str(order["mt5_position_id"]), []).append(order)
         grouped: dict[str, list[dict[str, Any]]] = {}
@@ -57,6 +69,7 @@ class BrokerReconciliationService:
             normalized = normalize_deal(deal)
             if not normalized.get("mt5_deal_ticket"):
                 continue
+            already_present = self.database.mt5_deal_exists(normalized["mt5_deal_ticket"])
             self.database.insert_mt5_deal(
                 {
                     **normalized,
@@ -65,10 +78,18 @@ class BrokerReconciliationService:
                     "mode": self.mode,
                 }
             )
-            result.imported_deals += 1
+            if already_present:
+                result.duplicate_deals += 1
+            else:
+                result.imported_deals += 1
             position_key = normalized.get("mt5_position_id") or normalized["mt5_deal_ticket"]
             grouped.setdefault(str(position_key), []).append(normalized)
 
+        active_positions = {
+            str(row.get("mt5_position_id")): row
+            for row in (normalize_position(item) for item in self._positions())
+            if row.get("mt5_position_id")
+        }
         for position_id, position_deals in grouped.items():
             trade = trade_from_deals(
                 position_id,
@@ -80,10 +101,16 @@ class BrokerReconciliationService:
                 session_id=session_id,
                 session_name=session_name,
                 mode=self.mode,
+                active_position=active_positions.get(position_id),
             )
             if trade:
+                existed = self.database._existing_trade_internal_id(trade) is not None
                 self.database.insert_trade(trade)
-                result.imported_trades += 1
+                if existed:
+                    result.updated_trades += 1
+                else:
+                    result.imported_trades += 1
+                self._events_from_deals(position_id, position_deals, trade, run_id, session_id)
         return result
 
     def reconcile_open_positions(
@@ -98,8 +125,42 @@ class BrokerReconciliationService:
         positions = self._positions()
         for position in positions:
             row = normalize_position(position)
+            existing = self.database.connection.execute(
+                "SELECT * FROM trades WHERE mt5_position_id = ? AND mode = 'demo_live'",
+                (row.get("mt5_position_id"),),
+            ).fetchone()
+            if existing:
+                existing_row = dict(existing)
+                self.database.update_trade_fields(
+                    existing_row["internal_trade_id"],
+                    {
+                        "remaining_volume": row.get("volume"),
+                        "final_stop_loss": row.get("sl"),
+                        "take_profit": row.get("tp") or existing_row.get("take_profit"),
+                        "status": "PARTIALLY_CLOSED" if float(row.get("volume") or 0) < float(existing_row.get("initial_volume") or existing_row.get("lot") or 0) else "OPEN",
+                    },
+                )
+                if row.get("sl") and float(row.get("sl")) != float(existing_row.get("final_stop_loss") or 0):
+                    self.database.insert_position_event(
+                        {
+                            "event_id": f"reconcile_sl_{row.get('mt5_position_id')}_{row.get('sl')}",
+                            "run_id": run_id,
+                            "session_id": session_id,
+                            "internal_trade_id": existing_row.get("internal_trade_id"),
+                            "mt5_position_id": row.get("mt5_position_id"),
+                            "event_type": "TRAILING_UPDATED",
+                            "timestamp_utc": utc_now_iso(),
+                            "old_stop_loss": existing_row.get("final_stop_loss"),
+                            "new_stop_loss": row.get("sl"),
+                            "payload": {"source": "broker_reconciliation"},
+                        }
+                    )
+            else:
+                self.database.insert_trade(trade_from_open_position(row, run_id, session_id, self.mode))
+                result.divergences.append(f"Imported missing open position {row.get('mt5_position_id')}")
             self.database.insert_position_event(
                 {
+                    "event_id": f"reconcile_open_{row.get('mt5_position_id')}_{row.get('volume')}_{row.get('sl')}",
                     "run_id": run_id,
                     "session_id": session_id,
                     "mt5_position_id": row.get("mt5_position_id"),
@@ -110,6 +171,7 @@ class BrokerReconciliationService:
                     "payload": row,
                 }
             )
+            result.synchronized_positions += 1
         return result
 
     def full_session_reconciliation(
@@ -124,7 +186,27 @@ class BrokerReconciliationService:
         open_positions = self.reconcile_open_positions(run_id, session_id)
         history.errors.extend(open_positions.errors)
         history.divergences.extend(open_positions.divergences)
+        history.synchronized_positions += open_positions.synchronized_positions
         return history
+
+    def reconcile_cycle(
+        self,
+        start_utc: datetime,
+        end_utc: datetime,
+        run_id: str,
+        session_id: str,
+        session_name: str | None,
+    ) -> ReconciliationResult:
+        result = self.full_session_reconciliation(
+            start_utc, end_utc, run_id, session_id, session_name
+        )
+        for order in self._orders():
+            normalized = normalize_order(order)
+            if normalized.get("mt5_order_ticket"):
+                self.database.insert_mt5_order(
+                    {**normalized, "run_id": run_id, "session_id": session_id, "mode": self.mode}
+                )
+        return result
 
     def _history_deals(self, start_utc: datetime, end_utc: datetime) -> list[Any]:
         deals = self.broker_api.history_deals_get(start_utc, end_utc)
@@ -139,6 +221,11 @@ class BrokerReconciliationService:
     def _positions(self) -> list[Any]:
         positions = self.broker_api.positions_get()
         return list(positions or [])
+
+    def _orders(self) -> list[Any]:
+        if not hasattr(self.broker_api, "orders_get"):
+            return []
+        return list(self.broker_api.orders_get() or [])
 
     def _symbol_info(self, symbol: str | None) -> dict[str, Any]:
         if not symbol or not hasattr(self.broker_api, "symbol_info"):
@@ -159,6 +246,40 @@ class BrokerReconciliationService:
         flags = getattr(self.broker_api, "COPY_TICKS_ALL", 0)
         ticks = self.broker_api.copy_ticks_range(symbol, start, end, flags)
         return [_as_dict(tick) for tick in list(ticks or [])]
+
+    def _events_from_deals(
+        self,
+        position_id: str,
+        deals: list[dict[str, Any]],
+        trade: dict[str, Any],
+        run_id: str | None,
+        session_id: str | None,
+    ) -> None:
+        first_direction = deals[0].get("direction") if deals else None
+        entries = [
+            item for item in deals
+            if item.get("direction") == first_direction and int(item.get("entry") or 0) == 0
+        ]
+        exits = [
+            item for item in deals
+            if item not in entries or int(item.get("entry") or 0) != 0
+        ]
+        for index, deal in enumerate(sorted(exits, key=lambda item: item.get("time_utc") or "")):
+            is_final = index == len(exits) - 1 and trade.get("status") == "CLOSED"
+            event_type = "POSITION_CLOSED" if is_final else "PARTIAL_CLOSE_CONFIRMED"
+            self.database.insert_position_event(
+                {
+                    "event_id": f"reconcile_deal_{deal.get('mt5_deal_ticket')}",
+                    "run_id": run_id,
+                    "session_id": session_id,
+                    "internal_trade_id": trade.get("internal_trade_id"),
+                    "mt5_position_id": position_id,
+                    "event_type": event_type,
+                    "timestamp_utc": deal.get("time_utc") or utc_now_iso(),
+                    "volume": deal.get("volume"),
+                    "payload": {"deal": deal, "entry_deal_count": len(entries)},
+                }
+            )
 
 
 def _as_dict(value: Any) -> dict[str, Any]:
@@ -197,14 +318,17 @@ def normalize_deal(deal: Any) -> dict[str, Any]:
 
 def normalize_position(position: Any) -> dict[str, Any]:
     row = _as_dict(position)
+    timestamp = row.get("time")
     return {
         "mt5_position_id": str(row.get("ticket")) if row.get("ticket") is not None else None,
         "symbol": row.get("symbol"),
+        "direction": direction_from_deal_type(row.get("type")),
         "volume": row.get("volume"),
         "price_open": row.get("price_open"),
         "sl": row.get("sl"),
         "tp": row.get("tp"),
         "profit": row.get("profit"),
+        "time_utc": datetime.fromtimestamp(int(timestamp), tz=timezone.utc).isoformat() if timestamp is not None else None,
         "raw": row,
     }
 
@@ -219,12 +343,16 @@ def normalize_order(order: Any) -> dict[str, Any]:
         "mt5_order_ticket": str(row.get("ticket")) if row.get("ticket") is not None else None,
         "mt5_position_id": str(row.get("position_id")) if row.get("position_id") is not None else None,
         "symbol": row.get("symbol"),
+        "direction": direction_from_order_type(row.get("type")),
         "volume_initial": row.get("volume_initial"),
         "volume_current": row.get("volume_current"),
         "price_open": row.get("price_open"),
         "sl": row.get("sl"),
         "tp": row.get("tp"),
         "time_setup_utc": time_utc,
+        "state": row.get("state"),
+        "reason": row.get("reason"),
+        "comment": row.get("comment"),
         "raw": row,
     }
 
@@ -242,6 +370,14 @@ def direction_from_deal_type(deal_type: Any) -> str:
     return "BUY" if value == 0 else "SELL" if value == 1 else "UNKNOWN"
 
 
+def direction_from_order_type(order_type: Any) -> str:
+    try:
+        value = int(order_type)
+    except (TypeError, ValueError):
+        return "UNKNOWN"
+    return "BUY" if value in {0, 2, 4, 6} else "SELL" if value in {1, 3, 5, 7} else "UNKNOWN"
+
+
 def trade_from_deals(
     position_id: str,
     deals: list[dict[str, Any]],
@@ -252,24 +388,41 @@ def trade_from_deals(
     session_id: str | None,
     session_name: str | None,
     mode: str,
+    active_position: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     sorted_deals = sorted(deals, key=lambda item: item.get("time_utc") or "")
     if not sorted_deals:
         return None
     open_deal = sorted_deals[0]
-    close_deal = sorted_deals[-1] if len(sorted_deals) > 1 else None
+    direction = open_deal.get("direction") or "UNKNOWN"
+    entry_deals = [
+        item
+        for item in sorted_deals
+        if item.get("direction") == direction and int(item.get("entry") or 0) == 0
+    ] or [open_deal]
+    exit_deals = [
+        item
+        for item in sorted_deals
+        if item not in entry_deals or int(item.get("entry") or 0) != 0
+    ]
+    close_deal = exit_deals[-1] if exit_deals else None
     orders = orders or []
     symbol_info = symbol_info or {}
     order_sl = first_nonzero([order.get("sl") for order in orders])
     order_tp = first_nonzero([order.get("tp") for order in orders])
-    entry_price = float(open_deal.get("price") or 0.0)
+    entry_volume = sum(float(item.get("volume") or 0.0) for item in entry_deals)
+    entry_price = (
+        sum(float(item.get("price") or 0.0) * float(item.get("volume") or 0.0) for item in entry_deals)
+        / entry_volume
+        if entry_volume > 0
+        else float(open_deal.get("price") or 0.0)
+    )
     exit_price = float(close_deal.get("price") or 0.0) if close_deal else None
     pnl_gross = sum(float(item.get("profit") or 0.0) for item in sorted_deals)
     commission = sum(float(item.get("commission") or 0.0) for item in sorted_deals)
     swap = sum(float(item.get("swap") or 0.0) for item in sorted_deals)
     pnl_net = pnl_gross + commission + swap
-    direction = open_deal.get("direction") or "UNKNOWN"
-    volume = float(open_deal.get("volume") or 0.0)
+    volume = entry_volume or float(open_deal.get("volume") or 0.0)
     stop_loss = float(order_sl or 0.0)
     take_profit = float(order_tp or 0.0)
     tick_size = float(symbol_info.get("trade_tick_size") or symbol_info.get("point") or 0.01)
@@ -288,7 +441,20 @@ def trade_from_deals(
         risk_amount = abs(entry_price - stop_loss) * (tick_value / tick_size) * volume
         realized_r = pnl_net / risk_amount if risk_amount else None
     internal_trade_id = f"mt5_position_{position_id}"
-    status = "CLOSED" if close_deal and close_deal.get("time_utc") != open_deal.get("time_utc") else "OPEN"
+    status = "OPEN" if active_position else "CLOSED" if close_deal else "OPEN"
+    remaining_volume = float(active_position.get("volume") or 0.0) if active_position else max(
+        volume - sum(float(item.get("volume") or 0.0) for item in exit_deals), 0.0
+    )
+    if status == "OPEN" and remaining_volume < volume:
+        status = "PARTIALLY_CLOSED"
+    first_partial = exit_deals[0] if exit_deals and (len(exit_deals) > 1 or status == "PARTIALLY_CLOSED") else None
+    duration_seconds = None
+    if close_deal and open_deal.get("time_utc") and close_deal.get("time_utc"):
+        opened = _parse_time(open_deal.get("time_utc"))
+        closed = _parse_time(close_deal.get("time_utc"))
+        if opened and closed:
+            duration_seconds = int((closed - opened).total_seconds())
+    exit_reason = infer_exit_reason(exit_price, stop_loss, take_profit, tick_size, status)
     return TradeRecord(
         run_id=run_id,
         session_id=session_id,
@@ -303,7 +469,7 @@ def trade_from_deals(
         direction=direction,
         lot=volume,
         initial_volume=volume,
-        remaining_volume=0.0 if status == "CLOSED" else volume,
+        remaining_volume=remaining_volume,
         entry_price=entry_price,
         actual_entry_price=entry_price,
         requested_price=entry_price,
@@ -321,7 +487,12 @@ def trade_from_deals(
         commission=commission,
         swap=swap,
         status=status,
-        exit_reason="BROKER_HISTORY",
+        duration_seconds=duration_seconds,
+        exit_reason=exit_reason,
+        tp1_actual_price=float(first_partial.get("price") or 0.0) if first_partial else None,
+        tp1_pnl=float(first_partial.get("profit") or 0.0) if first_partial else None,
+        tp1_volume=float(first_partial.get("volume") or 0.0) if first_partial else None,
+        tp1_time=first_partial.get("time_utc") if first_partial else None,
         mfe_price=excursions["mfe_price"],
         mfe_amount=excursions["mfe_amount"],
         mfe_r=excursions["mfe_r"],
@@ -335,6 +506,59 @@ def trade_from_deals(
         realized_r=realized_r,
         metadata={"deals": sorted_deals, "reconciled_at_utc": utc_now_iso(), "synthetic_id": new_id("rec")},
     ).to_dict()
+
+
+def trade_from_open_position(
+    position: dict[str, Any],
+    run_id: str | None,
+    session_id: str | None,
+    mode: str,
+) -> dict[str, Any]:
+    position_id = str(position["mt5_position_id"])
+    entry = float(position.get("price_open") or 0.0)
+    stop = float(position.get("sl") or 0.0)
+    take_profit = float(position.get("tp") or 0.0)
+    return TradeRecord(
+        run_id=run_id,
+        session_id=session_id,
+        internal_trade_id=f"mt5_position_{position_id}",
+        mt5_position_id=position_id,
+        mode=mode,
+        source="mt5_reconciliation",
+        symbol=position.get("symbol") or "UNKNOWN",
+        session=None,
+        direction=position.get("direction") or "UNKNOWN",
+        lot=float(position.get("volume") or 0.0),
+        initial_volume=float(position.get("volume") or 0.0),
+        remaining_volume=float(position.get("volume") or 0.0),
+        entry_price=entry,
+        actual_entry_price=entry,
+        requested_price=entry,
+        stop_loss=stop,
+        initial_stop_loss=stop,
+        final_stop_loss=stop,
+        take_profit=take_profit,
+        entry_time=position.get("time_utc") or utc_now_iso(),
+        status="OPEN",
+        metadata={"reconciled_open_position": position},
+    ).to_dict()
+
+
+def infer_exit_reason(
+    exit_price: float | None,
+    stop_loss: float,
+    take_profit: float,
+    tick_size: float,
+    status: str,
+) -> str | None:
+    if status != "CLOSED" or exit_price is None:
+        return None
+    tolerance = max(tick_size * 3, 1e-12)
+    if stop_loss and abs(exit_price - stop_loss) <= tolerance:
+        return "STOP_LOSS"
+    if take_profit and abs(exit_price - take_profit) <= tolerance:
+        return "TAKE_PROFIT"
+    return "BROKER_OR_MANUAL_EXIT"
 
 
 def first_nonzero(values: list[Any]) -> Any:

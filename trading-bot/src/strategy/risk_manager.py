@@ -9,26 +9,36 @@ from typing import Any
 
 @dataclass
 class SymbolTradingSpec:
-    tick_value: float = 1.0
-    tick_size: float = 0.01
-    volume_min: float = 0.01
-    volume_max: float = 1.0
-    volume_step: float = 0.01
-    point: float = 0.01
+    tick_value: float = 0.0
+    tick_size: float = 0.0
+    volume_min: float = 0.0
+    volume_max: float = 0.0
+    volume_step: float = 0.0
+    point: float = 0.0
     stop_level_points: float = 0.0
+    broker_validated: bool = False
 
     @classmethod
-    def from_symbol_info(cls, info: dict[str, Any], fallback: dict[str, Any] | None = None) -> "SymbolTradingSpec":
+    def from_symbol_info(
+        cls,
+        info: dict[str, Any],
+        fallback: dict[str, Any] | None = None,
+        strict: bool = False,
+    ) -> "SymbolTradingSpec":
         fallback = fallback or {}
-        return cls(
-            tick_value=float(info.get("trade_tick_value") or fallback.get("fallback_tick_value", 1.0)),
-            tick_size=float(info.get("trade_tick_size") or fallback.get("fallback_tick_size", 0.01)),
-            volume_min=float(info.get("volume_min") or fallback.get("fallback_volume_min", 0.01)),
-            volume_max=float(info.get("volume_max") or fallback.get("fallback_volume_max", 1.0)),
-            volume_step=float(info.get("volume_step") or fallback.get("fallback_volume_step", 0.01)),
-            point=float(info.get("point") or fallback.get("fallback_tick_size", 0.01)),
+        spec = cls(
+            tick_value=float(info.get("trade_tick_value") or (0.0 if strict else fallback.get("backtest_tick_value", 0.0))),
+            tick_size=float(info.get("trade_tick_size") or (0.0 if strict else fallback.get("backtest_tick_size", 0.0))),
+            volume_min=float(info.get("volume_min") or (0.0 if strict else fallback.get("backtest_volume_min", 0.0))),
+            volume_max=float(info.get("volume_max") or (0.0 if strict else fallback.get("backtest_volume_max", 0.0))),
+            volume_step=float(info.get("volume_step") or (0.0 if strict else fallback.get("backtest_volume_step", 0.0))),
+            point=float(info.get("point") or (0.0 if strict else fallback.get("backtest_tick_size", 0.0))),
             stop_level_points=float(info.get("trade_stops_level") or 0.0),
+            broker_validated=bool(info),
         )
+        if strict:
+            RiskManager.require_demo_live_symbol_spec(spec)
+        return spec
 
 
 @dataclass
@@ -39,6 +49,7 @@ class RiskState:
     daily_pnl: float = 0.0
     trades_this_session: int = 0
     consecutive_losses: int = 0
+    consecutive_losses_symbol: int = 0
     current_drawdown_percent: float = 0.0
     open_positions_same_symbol_direction: int = 0
     last_loss_lot: float | None = None
@@ -99,7 +110,7 @@ class RiskManager:
         stop_loss: float,
         symbol_spec: SymbolTradingSpec,
         risk_percent: float | None = None,
-        tolerance_percent: float = 0.05,
+        tolerance_percent: float | None = None,
     ) -> tuple[float, dict[str, Any]]:
         self.require_demo_live_symbol_spec(symbol_spec)
         configured_risk = float(
@@ -108,35 +119,62 @@ class RiskManager:
             else self.risk.get("risk_per_trade_percent", 0.25)
         )
         risk_amount = equity * configured_risk / 100
+        tolerance_percent = float(
+            self.position_sizing.get("risk_tolerance_percent", 0.02)
+            if tolerance_percent is None
+            else tolerance_percent
+        )
         order_type = getattr(broker_api, "ORDER_TYPE_BUY", 0) if direction.upper() == "BUY" else getattr(broker_api, "ORDER_TYPE_SELL", 1)
-        best_volume = 0.0
-        best_loss = 0.0
-        volume = symbol_spec.volume_min
-        while volume <= symbol_spec.volume_max + 1e-12:
-            profit = broker_api.order_calc_profit(order_type, symbol, volume, entry_price, stop_loss)
-            if profit is None:
-                break
-            estimated_loss = abs(float(profit))
-            if estimated_loss <= risk_amount * (1 + tolerance_percent):
-                best_volume = volume
-                best_loss = estimated_loss
-                volume = round(volume + symbol_spec.volume_step, 10)
-                continue
-            break
+        loss_one_lot = broker_api.order_calc_profit(order_type, symbol, 1.0, entry_price, stop_loss)
+        if loss_one_lot is None or abs(float(loss_one_lot)) <= 0:
+            raise ValueError("order_calc_profit could not validate monetary risk")
+        raw_volume = risk_amount / abs(float(loss_one_lot))
         rounded = normalize_volume(
-            best_volume,
+            raw_volume,
             symbol_spec.volume_min,
             symbol_spec.volume_max,
             symbol_spec.volume_step,
             rounding=self.position_sizing.get("volume_rounding", "floor"),
         )
+        if raw_volume < symbol_spec.volume_min:
+            minimum_loss = broker_api.order_calc_profit(
+                order_type, symbol, symbol_spec.volume_min, entry_price, stop_loss
+            )
+            if minimum_loss is None or abs(float(minimum_loss)) > risk_amount * (1 + tolerance_percent):
+                raise ValueError("Broker minimum volume exceeds the permitted monetary risk")
+        recalculated = broker_api.order_calc_profit(order_type, symbol, rounded, entry_price, stop_loss)
+        if recalculated is None:
+            raise ValueError("order_calc_profit failed after volume rounding")
+        loss_after_rounding = abs(float(recalculated))
+        while rounded > symbol_spec.volume_min and loss_after_rounding > risk_amount * (1 + tolerance_percent):
+            rounded = normalize_volume(
+                rounded - symbol_spec.volume_step,
+                symbol_spec.volume_min,
+                symbol_spec.volume_max,
+                symbol_spec.volume_step,
+                rounding="floor",
+            )
+            recalculated = broker_api.order_calc_profit(order_type, symbol, rounded, entry_price, stop_loss)
+            if recalculated is None:
+                raise ValueError("order_calc_profit failed while reducing rounded volume")
+            loss_after_rounding = abs(float(recalculated))
+        if loss_after_rounding > risk_amount * (1 + tolerance_percent):
+            raise ValueError("Rounded volume exceeds the permitted monetary risk")
+        margin = broker_api.order_calc_margin(order_type, symbol, rounded, entry_price)
+        if margin is None and self.position_sizing.get("require_order_calc_margin", True):
+            raise ValueError("order_calc_margin could not validate required margin")
         diagnostics = {
             "equity": equity,
             "risk_target_percent": configured_risk,
             "risk_target_amount": risk_amount,
-            "volume_raw": best_volume,
+            "entry_price": entry_price,
+            "stop_loss": stop_loss,
+            "stop_distance": abs(entry_price - stop_loss),
+            "loss_per_lot": abs(float(loss_one_lot)),
+            "volume_raw": raw_volume,
             "volume_rounded": rounded,
-            "loss_after_rounding": best_loss,
+            "loss_after_rounding": loss_after_rounding,
+            "estimated_margin": float(margin) if margin is not None else None,
             "tolerance_percent": tolerance_percent,
         }
         return rounded, diagnostics
@@ -152,6 +190,12 @@ class RiskManager:
             missing.append("volume_min")
         if symbol_spec.volume_step <= 0:
             missing.append("volume_step")
+        if symbol_spec.volume_max < symbol_spec.volume_min:
+            missing.append("volume_max")
+        if symbol_spec.point <= 0:
+            missing.append("point")
+        if not symbol_spec.broker_validated:
+            missing.append("symbol_info")
         if missing:
             raise ValueError(f"Missing broker symbol fields required in demo_live: {', '.join(missing)}")
 
@@ -164,6 +208,9 @@ class RiskManager:
         stop_loss: float | None,
         take_profit: float | None,
         symbol_spec: SymbolTradingSpec,
+        max_risk_percent: float | None = None,
+        min_risk_reward: float | None = None,
+        max_trades_per_session: int | None = None,
     ) -> RiskCheck:
         reasons: list[str] = []
         if self.risk.get("allow_martingale", False):
@@ -190,16 +237,21 @@ class RiskManager:
             reasons.append("BUY risk geometry invalid")
         if direction.upper() == "SELL" and not (take_profit < entry_price < stop_loss):
             reasons.append("SELL risk geometry invalid")
-        if risk_percent > float(self.risk.get("max_risk_per_trade_percent", 0.5)):
+        risk_limit = float(max_risk_percent if max_risk_percent is not None else self.risk.get("max_risk_per_trade_percent", 0.5))
+        if risk_percent > risk_limit:
             reasons.append(
-                f"Risk per trade too high: {risk_percent:.3f}% > {self.risk.get('max_risk_per_trade_percent')}%"
+                f"Risk per trade too high: {risk_percent:.3f}% > {risk_limit}%"
             )
-        if risk_reward < float(self.risk.get("min_risk_reward", 1.4)):
+        rr_limit = float(min_risk_reward if min_risk_reward is not None else self.risk.get("min_risk_reward", 0.8))
+        if risk_reward < rr_limit:
             reasons.append(f"Risk/reward too low: {risk_reward:.2f}")
-        if state.trades_this_session >= int(self.risk.get("max_trades_per_session", 6)):
+        trade_limit = int(max_trades_per_session if max_trades_per_session is not None else self.risk.get("max_trades_per_session", 0))
+        if trade_limit > 0 and state.trades_this_session >= trade_limit:
             reasons.append("Maximum trades per session reached")
-        if state.consecutive_losses >= int(self.risk.get("max_consecutive_losses", 3)):
+        if state.consecutive_losses >= int(self.risk.get("max_consecutive_losses_global", 4)):
             reasons.append("Maximum consecutive losses reached")
+        if state.consecutive_losses_symbol >= int(self.risk.get("max_consecutive_losses_per_symbol", 2)):
+            reasons.append("Maximum consecutive losses for symbol reached")
         if state.current_drawdown_percent >= float(self.risk.get("max_drawdown_percent", 6.0)):
             reasons.append("Maximum drawdown reached")
         if abs(min(state.session_pnl, 0.0)) >= state.equity * float(self.risk.get("max_session_loss_percent", 1.5)) / 100:
@@ -223,6 +275,12 @@ class RiskManager:
             reward_amount=reward_amount,
             risk_reward=risk_reward,
         )
+
+    def adjusted_risk_after_losses(self, base_risk_percent: float, consecutive_losses_symbol: int) -> float:
+        if consecutive_losses_symbol < 2:
+            return base_risk_percent
+        multiplier = float(self.risk.get("risk_multiplier_after_two_losses", 0.5))
+        return max(base_risk_percent * min(multiplier, 1.0), 0.0)
 
 
 def normalize_volume(

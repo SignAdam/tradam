@@ -1,12 +1,12 @@
 risk:
-  risk_per_trade_percent: 0.25
-  max_risk_per_trade_percent: 0.5
-  max_session_loss_percent: 1.5
-  max_daily_loss_percent: 3.0
-  max_drawdown_percent: 6.0
-  max_trades_per_session: 6
-  max_consecutive_losses: 3
-  min_risk_reward: 1.4
+  max_session_loss_percent: 1.25
+  max_daily_loss_percent: 2.0
+  max_drawdown_percent: 5.0
+  max_consecutive_losses_global: 4
+  max_consecutive_losses_per_symbol: 2
+  max_simultaneous_positions: 3
+  max_correlated_positions_per_group: 1
+  minimum_trades_per_session: 0
   allow_martingale: false
   allow_grid: false
   allow_loss_recovery: false
@@ -14,14 +14,20 @@ risk:
   require_stop_loss: true
   require_take_profit: true
   close_on_abnormal_conditions: true
+  risk_multiplier_after_two_losses: 0.50
+  score_penalty_after_two_losses: 0.50
 
 position_sizing:
   volume_rounding: floor
-  fallback_tick_value: 1.0
-  fallback_tick_size: 0.01
-  fallback_volume_min: 0.01
-  fallback_volume_max: 1.0
-  fallback_volume_step: 0.01
+  risk_tolerance_percent: 0.02
+  require_order_calc_profit: true
+  require_order_calc_margin: true
+  # Values below are reserved for offline backtests and are forbidden in demo_live.
+  backtest_tick_value: 1.0
+  backtest_tick_size: 0.01
+  backtest_volume_min: 0.01
+  backtest_volume_max: 1.0
+  backtest_volume_step: 0.01
 
 execution:
   max_slippage_points: 30
@@ -31,49 +37,23 @@ execution:
   validate_stop_distance: true
   reject_if_spread_above_symbol_limit: true
   require_account_trading_allowed: true
+  require_order_check: true
+  max_spread_cost_ratio: 0.25
+  minimum_net_profit: 0.50
 
-trade_management:
+position_management:
   trailing_stop_enabled: true
-  trailing_atr_multiplier: 1.0
+  trailing_method: swing_or_ema9
+  trailing_atr_multiplier: 0.60
   break_even_enabled: true
-  break_even_after_r: 0.7
-  tp1_close_percent: 0.60
-  tp1_r: 0.70
-  tp2_r: 1.35
-  risk_reduction_enabled: true
-  risk_reduction_after_r: 0.40
-  reduced_risk_r: 0.30
   break_even_cost_buffer_points: 2
-  max_duration_seconds: 1800
-  close_on_inverse_signal: true
+  max_sl_modify_attempts: 2
+  action_confirmation_ticks: 2
   close_before_session_end: true
 
-exit_profiles:
-  XAUUSD:
-    Asian:
-      tp1_r: 0.65
-      tp2_r: 1.25
-      max_duration_seconds: 1200
-      max_stop_points: 1400
-    US:
-      tp1_r: 0.70
-      tp2_r: 1.35
-      max_duration_seconds: 1800
-      max_stop_points: 1800
-  BTC:
-    Asian:
-      tp1_r: 0.60
-      tp2_r: 1.20
-      max_duration_seconds: 1500
-      max_stop_points: 4000
-    US:
-      tp1_r: 0.75
-      tp2_r: 1.45
-      max_duration_seconds: 1800
-      max_stop_points: 5500
-  DJ30:
-    US:
-      tp1_r: 0.65
-      tp2_r: 1.25
-      max_duration_seconds: 1500
-      max_stop_points: 500
+underlying_group_limits:
+  nasdaq_group: {max_positions: 1, max_risk_percent: 0.35}
+  dow_group: {max_positions: 1, max_risk_percent: 0.35}
+  gold_group: {max_positions: 1, max_risk_percent: 0.25}
+  crypto_group: {max_positions: 1, max_risk_percent: 0.25}
+  forex_group: {max_positions: 1, max_risk_percent: 0.30}

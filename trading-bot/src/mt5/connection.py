@@ -102,23 +102,23 @@ class MT5Connection:
 
     def ensure_account_safety(self, trading_config: dict[str, Any]) -> AccountSnapshot:
         snapshot = self.account_snapshot()
-        mode = trading_config.get("mode", "paper")
+        mode = trading_config.get("mode", "demo_live")
         enable_live = parse_bool(trading_config.get("enable_live_trading"), False)
-        double_confirm = parse_bool(trading_config.get("live_trading_confirmation"), False)
         require_demo = parse_bool(trading_config.get("require_demo_account"), True)
 
-        if not snapshot.trade_allowed and mode in {"demo_live", "live"}:
+        if mode != "demo_live":
+            raise SafetyError(f"Connected MT5 execution requires demo_live mode, got {mode}.")
+        if enable_live:
+            raise SafetyError("Real trading is permanently disabled.")
+        if not require_demo:
+            raise SafetyError("require_demo_account must remain true.")
+        if not snapshot.trade_allowed:
             raise SafetyError("Account trading is not allowed by the terminal/account.")
-        if mode == "demo_live" and not snapshot.is_demo:
+        if not snapshot.is_demo:
             raise SafetyError("demo_live mode requires a MetaTrader 5 demo account.")
-        if require_demo and not snapshot.is_demo:
-            raise SafetyError("This configuration requires a demo account.")
-        if not snapshot.is_demo and not (enable_live and double_confirm and mode == "live"):
-            raise SafetyError("Real account detected while live trading is not explicitly enabled.")
         return snapshot
 
     def terminal_info(self) -> dict[str, Any]:
         if mt5 is None or not self.initialized:
             raise MT5ConnectionError("MT5 is not initialized.")
         return _as_dict(mt5.terminal_info())
-

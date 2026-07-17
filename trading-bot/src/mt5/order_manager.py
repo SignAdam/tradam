@@ -1,10 +1,9 @@
-"""Pre-trade validation and order submission for MT5 or paper mode."""
+"""Pre-trade validation and order submission restricted to MT5 demo_live."""
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
 
 from src.mt5.connection import mt5
@@ -117,24 +116,17 @@ class OrderManager:
         return OrderValidationResult(ok=not reasons, reasons=reasons, normalized_lot=normalized_lot)
 
     def send_order(self, request: OrderRequest) -> dict[str, Any]:
-        mode = self.trading_config.get("mode", "paper")
+        mode = self.trading_config.get("mode", "demo_live")
         validation = self.validate_order(request)
         if not validation.ok:
             raise BrokerValidationError("; ".join(validation.reasons))
 
-        if mode in {"paper", "backtest"}:
-            return {
-                "mode": mode,
-                "status": "simulated",
-                "order_id": f"paper-{datetime.utcnow().isoformat()}",
-                "request": request.__dict__,
-            }
-
-        if mode == "live" and not (
-            parse_bool(self.trading_config.get("enable_live_trading"), False)
-            and parse_bool(self.trading_config.get("live_trading_confirmation"), False)
-        ):
-            raise SafetyError("Live order blocked by ENABLE_LIVE_TRADING/LIVE_TRADING_CONFIRMATION.")
+        if mode != "demo_live":
+            raise SafetyError(f"Order submission is only allowed in demo_live mode, got {mode}.")
+        if parse_bool(self.trading_config.get("enable_live_trading"), False):
+            raise SafetyError("Real trading is permanently disabled.")
+        if not parse_bool(self.trading_config.get("require_demo_account"), True):
+            raise SafetyError("require_demo_account must remain true.")
         if mt5 is None:
             raise BrokerValidationError("MetaTrader5 package is not available.")
         self._ensure_terminal_allows_autotrading()
@@ -155,22 +147,25 @@ class OrderManager:
             "type_filling": mt5.ORDER_FILLING_IOC,
         }
         check = mt5.order_check(payload)
-        if check is not None:
-            check_data = check._asdict() if hasattr(check, "_asdict") else dict(check)
-            ok_retcodes = {
-                0,
-                getattr(mt5, "TRADE_RETCODE_DONE", None),
-                getattr(mt5, "TRADE_RETCODE_PLACED", None),
-                getattr(mt5, "TRADE_RETCODE_DONE_PARTIAL", None),
-            }
-            if check_data.get("retcode") not in ok_retcodes:
-                raise BrokerValidationError(f"MT5 order_check rejected request: {check_data}")
+        if check is None:
+            raise BrokerValidationError(f"MT5 order_check returned None: {mt5.last_error()}")
+        check_data = check._asdict() if hasattr(check, "_asdict") else dict(check)
+        ok_retcodes = {
+            0,
+            getattr(mt5, "TRADE_RETCODE_DONE", None),
+            getattr(mt5, "TRADE_RETCODE_PLACED", None),
+            getattr(mt5, "TRADE_RETCODE_DONE_PARTIAL", None),
+        }
+        if check_data.get("retcode") not in ok_retcodes:
+            raise BrokerValidationError(f"MT5 order_check rejected request: {check_data}")
         result = mt5.order_send(payload)
         if result is None:
             raise BrokerValidationError(f"MT5 order_send returned None: {mt5.last_error()}")
         data = result._asdict() if hasattr(result, "_asdict") else dict(result)
         if data.get("retcode") != getattr(mt5, "TRADE_RETCODE_DONE", data.get("retcode")):
             raise BrokerValidationError(f"Order rejected by MT5: {data}")
+        data["order_check"] = check_data
+        data["request_payload"] = payload
         return data
 
     def _ensure_terminal_allows_autotrading(self) -> None:

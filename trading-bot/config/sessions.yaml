@@ -1,36 +1,40 @@
-timezone: Europe/Paris
-broker_timezone: Europe/Paris
+display_timezone: Europe/Paris
+broker_utc_offset_minutes: 0
 
 sessions:
   Asian:
     enabled: true
-    start: "00:00"
-    end: "08:30"
-    reference_markets:
-      - Tokyo
-      - Sydney
+    timezone: Asia/Tokyo
+    start: "08:00"
+    end: "17:00"
+    symbols: [BTCUSD, XAUUSD, AUDNZD]
+    preferred_strategies: [ASIAN_RANGE_SCALP, FAST_TREND_PULLBACK, VWAP_RECLAIM, BREAKOUT_RETEST]
     allow_new_trades_until_minutes_before_end: 20
     close_positions_before_end_minutes: 10
 
   US:
     enabled: true
-    start: "14:30"
-    end: "22:00"
-    reference_markets:
-      - New York
+    timezone: America/New_York
+    start: "08:30"
+    end: "16:00"
+    symbols: [BTCUSD, XAUUSD, NAS100, NDX100, US30]
+    preferred_strategies: [OPENING_RANGE_BREAKOUT, FAST_TREND_PULLBACK, VWAP_RECLAIM, BREAKOUT_RETEST, LIQUIDITY_SWEEP_REVERSAL]
+    opening_range_start: "09:30"
+    opening_range_minutes: 15
     allow_new_trades_until_minutes_before_end: 20
     close_positions_before_end_minutes: 10
 
 low_liquidity_blocks:
   - name: broker_rollover
     enabled: true
-    start: "22:55"
-    end: "23:10"
+    timezone: UTC
+    start: "21:55"
+    end: "22:10"
     reason: Broker rollover / spreads often widen
   - name: pre_weekend
     enabled: true
+    timezone: UTC
     weekday: 4
-    start: "21:30"
+    start: "20:30"
     end: "23:59"
     reason: Friday late-session liquidity risk
-

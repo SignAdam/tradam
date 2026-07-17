@@ -1,75 +1,199 @@
 symbols:
+  BTCUSD:
+    enabled: true
+    priority: 1
+    profile: priority
+    asset_class: crypto
+    underlying_group: crypto_group
+    aliases: [BTCUSD, BTCUSDm, BTCUSD., BTCUSD.r, BTCUSD.pro, BTCUSDT, Bitcoin, BTC]
+    sessions: [Asian, US]
+    strategies: [FAST_TREND_PULLBACK, VWAP_RECLAIM, EMA9_EMA20_MOMENTUM, BREAKOUT_RETEST, LIQUIDITY_SWEEP_REVERSAL]
+    queries: [Bitcoin, BTC, crypto, Bitcoin ETF, crypto regulation, Binance, Coinbase, Fed, risk sentiment]
+    minimum_score: 5.8
+    max_spread_points: 5000
+    max_spread_cost_ratio: 0.25
+    minimum_net_profit: 0.50
+    max_stop_points: 6500
+    risk_per_trade_percent: 0.15
+    max_risk_per_trade_percent: 0.25
+    max_trades_per_session: 8
+    tp1_volume_percent: 65
+    tp2_volume_percent: 35
+    tp1_target_r_min: 0.35
+    tp1_target_r_max: 0.65
+    tp2_target_r_min: 0.80
+    tp2_target_r_max: 1.30
+    risk_reduction_after_r: 0.25
+    reduced_risk_r: 0.25
+    max_trade_duration_minutes: 20
+    no_progress_timeout_minutes: 6
+    no_progress_min_r: 0.15
+    cooldown:
+      normal_minutes: 3
+      after_win_minutes: 2
+      after_loss_minutes: 8
+
   XAUUSD:
     enabled: true
+    priority: 2
+    profile: priority
     asset_class: metal
-    aliases:
-      - XAUUSD
-      - XAUUSDm
-      - XAUUSD.r
-      - XAUUSD.i
-      - GOLD
-      - Gold
-    queries:
-      - XAUUSD
-      - gold
-      - USD
-      - Fed
-      - inflation
-      - CPI
-      - NFP
-      - interest rates
+    underlying_group: gold_group
+    aliases: [XAUUSD, XAUUSDm, XAUUSD., XAUUSD.r, XAUUSD.pro, GOLD, Gold]
+    sessions: [Asian, US]
+    strategies: [FAST_TREND_PULLBACK, VWAP_RECLAIM, EMA9_EMA20_MOMENTUM, BREAKOUT_RETEST, LIQUIDITY_SWEEP_REVERSAL, ASIAN_RANGE_SCALP, OPENING_RANGE_BREAKOUT]
+    queries: [XAUUSD, gold, USD, Fed, inflation, CPI, NFP, interest rates, geopolitics]
+    minimum_score: 6.0
     max_spread_points: 60
-    min_stop_points: 50
-    preferred_entry_timeframe: M5
-    point_value_fallback: 0.01
+    max_spread_cost_ratio: 0.25
+    minimum_net_profit: 0.50
+    max_stop_points: 1800
+    risk_per_trade_percent: 0.15
+    max_risk_per_trade_percent: 0.25
+    max_trades_per_session: 8
+    tp1_volume_percent: 65
+    tp2_volume_percent: 35
+    tp1_target_r_min: 0.40
+    tp1_target_r_max: 0.70
+    tp2_target_r_min: 0.90
+    tp2_target_r_max: 1.40
+    risk_reduction_after_r: 0.30
+    reduced_risk_r: 0.25
+    max_trade_duration_minutes: 20
+    no_progress_timeout_minutes: 7
+    no_progress_min_r: 0.20
+    cooldown:
+      normal_minutes: 4
+      after_win_minutes: 3
+      after_loss_minutes: 10
 
-  BTC:
+  NAS100:
     enabled: true
-    asset_class: crypto
-    aliases:
-      - BTCUSD
-      - BTCUSDm
-      - BTCUSDT
-      - BTCUSD.r
-      - BTCUSD.pro
-      - Bitcoin
-      - BTC
-    queries:
-      - Bitcoin
-      - BTC
-      - crypto
-      - Bitcoin ETF
-      - crypto regulation
-      - Binance
-      - Coinbase
-      - Fed
-      - risk sentiment
-    max_spread_points: 5000
-    min_stop_points: 1500
-    preferred_entry_timeframe: M5
-    point_value_fallback: 1.0
-
-  DJ30:
-    enabled: true
+    priority: 3
+    profile: validated
     asset_class: index
-    aliases:
-      - DJ30
-      - US30
-      - WallStreet30
-      - DJI
-      - DJIA
-      - US30Cash
-      - DowJones30
-    queries:
-      - Dow Jones
-      - US stocks
-      - Fed
-      - CPI
-      - NFP
-      - earnings
-      - risk sentiment
+    underlying_group: nasdaq_group
+    aliases: [NAS100, NAS100m, NAS100Cash, NAS100.cash, USTEC, USTECm, US100, US100Cash, Nasdaq, Nasdaq100]
+    sessions: [US]
+    strategies: [FAST_TREND_PULLBACK, VWAP_RECLAIM, BREAKOUT_RETEST, OPENING_RANGE_BREAKOUT]
+    queries: [Nasdaq 100, US stocks, Fed, CPI, NFP, earnings, risk sentiment]
+    minimum_score: 6.8
     max_spread_points: 120
-    min_stop_points: 80
-    preferred_entry_timeframe: M5
-    point_value_fallback: 1.0
+    max_spread_cost_ratio: 0.25
+    minimum_net_profit: 0.75
+    max_stop_points: 650
+    risk_per_trade_percent: 0.25
+    max_risk_per_trade_percent: 0.35
+    max_trades_per_session: 3
+    tp1_volume_percent: 50
+    tp2_volume_percent: 50
+    tp1_target_r_min: 0.60
+    tp1_target_r_max: 0.90
+    tp2_target_r_min: 1.20
+    tp2_target_r_max: 1.60
+    risk_reduction_after_r: 0.60
+    reduced_risk_r: 0.35
+    max_trade_duration_minutes: 30
+    no_progress_timeout_minutes: 10
+    no_progress_min_r: 0.20
+    cooldown: {normal_minutes: 10, after_win_minutes: 8, after_loss_minutes: 20}
 
+  NDX100:
+    enabled: true
+    priority: 4
+    profile: validated
+    asset_class: index
+    underlying_group: nasdaq_group
+    aliases: [NDX100, NDX, NDX100Cash, NASDAQ100, USNDX, US100, USTEC]
+    sessions: [US]
+    strategies: [FAST_TREND_PULLBACK, VWAP_RECLAIM, BREAKOUT_RETEST, OPENING_RANGE_BREAKOUT]
+    queries: [Nasdaq 100, US stocks, Fed, CPI, NFP, earnings, risk sentiment]
+    minimum_score: 6.8
+    max_spread_points: 120
+    max_spread_cost_ratio: 0.25
+    minimum_net_profit: 0.75
+    max_stop_points: 650
+    risk_per_trade_percent: 0.25
+    max_risk_per_trade_percent: 0.35
+    max_trades_per_session: 3
+    tp1_volume_percent: 50
+    tp2_volume_percent: 50
+    tp1_target_r_min: 0.60
+    tp1_target_r_max: 0.90
+    tp2_target_r_min: 1.20
+    tp2_target_r_max: 1.60
+    risk_reduction_after_r: 0.60
+    reduced_risk_r: 0.35
+    max_trade_duration_minutes: 30
+    no_progress_timeout_minutes: 10
+    no_progress_min_r: 0.20
+    cooldown: {normal_minutes: 10, after_win_minutes: 8, after_loss_minutes: 20}
+
+  US30:
+    enabled: true
+    priority: 5
+    profile: validated
+    asset_class: index
+    underlying_group: dow_group
+    aliases: [US30, US30m, US30Cash, US30.cash, DJ30, DJI, DJIA, WallStreet30, DowJones30]
+    sessions: [US]
+    strategies: [FAST_TREND_PULLBACK, VWAP_RECLAIM, BREAKOUT_RETEST, OPENING_RANGE_BREAKOUT, LIQUIDITY_SWEEP_REVERSAL]
+    queries: [Dow Jones, US stocks, Fed, CPI, NFP, earnings, risk sentiment]
+    minimum_score: 7.0
+    max_spread_points: 140
+    max_spread_cost_ratio: 0.25
+    minimum_net_profit: 0.75
+    max_stop_points: 700
+    risk_per_trade_percent: 0.25
+    max_risk_per_trade_percent: 0.35
+    max_trades_per_session: 3
+    tp1_volume_percent: 50
+    tp2_volume_percent: 50
+    tp1_target_r_min: 0.60
+    tp1_target_r_max: 0.90
+    tp2_target_r_min: 1.20
+    tp2_target_r_max: 1.60
+    risk_reduction_after_r: 0.60
+    reduced_risk_r: 0.35
+    max_trade_duration_minutes: 30
+    no_progress_timeout_minutes: 10
+    no_progress_min_r: 0.20
+    cooldown: {normal_minutes: 10, after_win_minutes: 8, after_loss_minutes: 20}
+
+  AUDNZD:
+    enabled: true
+    priority: 6
+    profile: validated
+    asset_class: forex
+    underlying_group: forex_group
+    aliases: [AUDNZD, AUDNZDm, AUDNZD., AUDNZD.r, AUDNZD.pro]
+    sessions: [Asian]
+    strategies: [ASIAN_RANGE_SCALP, FAST_TREND_PULLBACK, VWAP_RECLAIM, BREAKOUT_RETEST]
+    queries: [RBA, RBNZ, Australia inflation, New Zealand inflation, China PMI, employment, interest rates]
+    minimum_score: 6.8
+    max_spread_points: 35
+    max_spread_cost_ratio: 0.25
+    minimum_net_profit: 0.25
+    max_stop_points: 180
+    risk_per_trade_percent: 0.20
+    max_risk_per_trade_percent: 0.30
+    max_trades_per_session: 3
+    tp1_volume_percent: 60
+    tp2_volume_percent: 40
+    tp1_target_r_min: 0.50
+    tp1_target_r_max: 0.80
+    tp2_target_r_min: 1.00
+    tp2_target_r_max: 1.40
+    risk_reduction_after_r: 0.55
+    reduced_risk_r: 0.35
+    max_trade_duration_minutes: 35
+    no_progress_timeout_minutes: 12
+    no_progress_min_r: 0.20
+    cooldown: {normal_minutes: 10, after_win_minutes: 8, after_loss_minutes: 20}
+
+underlying_groups:
+  nasdaq_group: [NAS100, NDX100]
+  dow_group: [US30]
+  gold_group: [XAUUSD]
+  crypto_group: [BTCUSD]
+  forex_group: [AUDNZD]

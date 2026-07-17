@@ -46,3 +46,22 @@ def test_risk_manager_rejects_low_risk_reward() -> None:
     assert not check.ok
     assert any("Risk/reward" in reason for reason in check.reasons)
 
+
+def test_demo_live_sizing_rejects_missing_broker_tick_values() -> None:
+    manager = RiskManager(RISK_CONFIG)
+    spec = SymbolTradingSpec(tick_value=0.0, tick_size=0.0, volume_min=0.01, volume_max=1, volume_step=0.01)
+    try:
+        manager.calculate_position_size_with_broker(
+            broker_api=object(),
+            symbol="XAUUSD",
+            direction="SELL",
+            equity=10_000,
+            entry_price=3997.4,
+            stop_loss=4006.02,
+            symbol_spec=spec,
+        )
+    except ValueError as exc:
+        assert "tick_size" in str(exc)
+        assert "tick_value" in str(exc)
+    else:
+        raise AssertionError("Missing broker tick values must be rejected")

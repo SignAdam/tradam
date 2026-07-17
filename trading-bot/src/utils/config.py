@@ -11,6 +11,7 @@ import yaml
 from dotenv import load_dotenv
 
 from src.utils.exceptions import ConfigurationError, SafetyError
+from src.utils.security import redact_sensitive_data
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -126,10 +127,7 @@ def enforce_live_trading_guard(config: dict[str, Any]) -> None:
 
 
 def redacted_config(config: dict[str, Any]) -> dict[str, Any]:
-    redacted = deepcopy(config)
-    mt5 = redacted.get("settings", {}).get("mt5", {})
-    if mt5.get("password"):
-        mt5["password"] = "***"
+    redacted = redact_sensitive_data(deepcopy(config))
     for env_name in (
         "ALPHA_VANTAGE_API_KEY",
         "MARKETAUX_API_KEY",
@@ -140,4 +138,3 @@ def redacted_config(config: dict[str, Any]) -> dict[str, Any]:
         if os.getenv(env_name):
             redacted.setdefault("env", {})[env_name] = "***"
     return redacted
-

@@ -89,6 +89,72 @@ class RiskManager:
             rounding=self.position_sizing.get("volume_rounding", "floor"),
         )
 
+    def calculate_position_size_with_broker(
+        self,
+        broker_api: Any,
+        symbol: str,
+        direction: str,
+        equity: float,
+        entry_price: float,
+        stop_loss: float,
+        symbol_spec: SymbolTradingSpec,
+        risk_percent: float | None = None,
+        tolerance_percent: float = 0.05,
+    ) -> tuple[float, dict[str, Any]]:
+        self.require_demo_live_symbol_spec(symbol_spec)
+        configured_risk = float(
+            risk_percent
+            if risk_percent is not None
+            else self.risk.get("risk_per_trade_percent", 0.25)
+        )
+        risk_amount = equity * configured_risk / 100
+        order_type = getattr(broker_api, "ORDER_TYPE_BUY", 0) if direction.upper() == "BUY" else getattr(broker_api, "ORDER_TYPE_SELL", 1)
+        best_volume = 0.0
+        best_loss = 0.0
+        volume = symbol_spec.volume_min
+        while volume <= symbol_spec.volume_max + 1e-12:
+            profit = broker_api.order_calc_profit(order_type, symbol, volume, entry_price, stop_loss)
+            if profit is None:
+                break
+            estimated_loss = abs(float(profit))
+            if estimated_loss <= risk_amount * (1 + tolerance_percent):
+                best_volume = volume
+                best_loss = estimated_loss
+                volume = round(volume + symbol_spec.volume_step, 10)
+                continue
+            break
+        rounded = normalize_volume(
+            best_volume,
+            symbol_spec.volume_min,
+            symbol_spec.volume_max,
+            symbol_spec.volume_step,
+            rounding=self.position_sizing.get("volume_rounding", "floor"),
+        )
+        diagnostics = {
+            "equity": equity,
+            "risk_target_percent": configured_risk,
+            "risk_target_amount": risk_amount,
+            "volume_raw": best_volume,
+            "volume_rounded": rounded,
+            "loss_after_rounding": best_loss,
+            "tolerance_percent": tolerance_percent,
+        }
+        return rounded, diagnostics
+
+    @staticmethod
+    def require_demo_live_symbol_spec(symbol_spec: SymbolTradingSpec) -> None:
+        missing: list[str] = []
+        if symbol_spec.tick_size <= 0:
+            missing.append("tick_size")
+        if symbol_spec.tick_value <= 0:
+            missing.append("tick_value")
+        if symbol_spec.volume_min <= 0:
+            missing.append("volume_min")
+        if symbol_spec.volume_step <= 0:
+            missing.append("volume_step")
+        if missing:
+            raise ValueError(f"Missing broker symbol fields required in demo_live: {', '.join(missing)}")
+
     def validate_trade(
         self,
         state: RiskState,
@@ -178,4 +244,3 @@ def normalize_volume(
         steps = math.floor(steps_float + 1e-12)
     normalized = volume_min + steps * volume_step
     return round(min(max(normalized, volume_min), volume_max), 8)
-

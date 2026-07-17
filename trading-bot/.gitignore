@@ -6,12 +6,12 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-logs/*.log
-data/*.db
-data/*.sqlite
+logs/**
+!logs/.gitkeep
+data/**
+!data/.gitkeep
 reports/*
 !reports/example_session_report.html
 !reports/example_session_report.csv
 !reports/example_session_report.json
 .DS_Store
-

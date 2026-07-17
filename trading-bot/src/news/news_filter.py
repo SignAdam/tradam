@@ -29,12 +29,15 @@ class NewsFilter:
         symbol_group: str,
         articles: list[NewsArticle | dict[str, Any]],
         events: list[EconomicEvent | dict[str, Any]],
+        provider_health: list[dict[str, Any]] | None = None,
         now: datetime | None = None,
     ) -> dict[str, Any]:
         now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
         article_dicts = [item.to_dict() if hasattr(item, "to_dict") else dict(item) for item in articles]
         event_objects = [self._event(item) for item in events]
         aggregate = self.sentiment_engine.aggregate(article_dicts)
+        provider_health = provider_health or []
+        news_state = self._news_state(provider_health, article_dicts, event_objects)
         blocked_events = self.calendar.high_impact_events_near(
             event_objects,
             now,
@@ -54,15 +57,20 @@ class NewsFilter:
             reasons.extend(f"High-impact calendar event: {event.title}" for event in blocked_events)
         if dangerous_articles:
             reasons.extend(f"Dangerous high-impact news: {article['title']}" for article in dangerous_articles[:3])
+        degraded_block = self._should_block_degraded(symbol_group, news_state)
+        if degraded_block:
+            reasons.append(f"News/calendar data degraded: {news_state}")
         return {
             "symbol_group": symbol_group,
-            "blocked": bool(blocked_events or dangerous_articles),
+            "blocked": bool(blocked_events or dangerous_articles or degraded_block),
             "reasons": reasons,
-            "sentiment": aggregate["sentiment"],
+            "sentiment": aggregate["sentiment"] if news_state == "HEALTHY" else "unknown",
             "score": aggregate["score"],
-            "impact": "high" if blocked_events or dangerous_articles else aggregate["impact"],
+            "impact": "high" if blocked_events or dangerous_articles or degraded_block else aggregate["impact"],
+            "data_state": news_state,
             "active_news": article_dicts[:10],
             "active_events": [event.to_dict() for event in blocked_events],
+            "provider_health": provider_health,
         }
 
     @staticmethod
@@ -87,3 +95,30 @@ class NewsFilter:
             return {"USD", "BTC"}
         return {"USD"}
 
+    @staticmethod
+    def _news_state(
+        provider_health: list[dict[str, Any]],
+        articles: list[dict[str, Any]],
+        events: list[EconomicEvent],
+    ) -> str:
+        statuses = {str(item.get("status", "UNKNOWN")) for item in provider_health}
+        if any(status in statuses for status in {"AUTH_ERROR", "RATE_LIMITED"}):
+            return "UNAVAILABLE"
+        if not provider_health:
+            return "UNAVAILABLE"
+        if statuses and statuses <= {"NOT_CONFIGURED"}:
+            return "NOT_CONFIGURED"
+        if any(status == "HEALTHY" for status in statuses):
+            return "HEALTHY" if articles or events else "EMPTY_VALID_RESPONSE"
+        if any(status == "EMPTY_VALID_RESPONSE" for status in statuses):
+            return "EMPTY_VALID_RESPONSE"
+        return "UNAVAILABLE"
+
+    def _should_block_degraded(self, symbol_group: str, news_state: str) -> bool:
+        if news_state in {"HEALTHY", "EMPTY_VALID_RESPONSE"}:
+            return False
+        if symbol_group in {"XAUUSD", "DJ30"}:
+            return bool(self.config.get("block_when_macro_news_unavailable", True))
+        if symbol_group == "BTC":
+            return bool(self.config.get("block_btc_when_news_unavailable", False))
+        return False

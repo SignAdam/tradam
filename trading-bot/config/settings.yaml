@@ -91,5 +91,6 @@ news:
   dangerous_sentiment_threshold: -0.45
   positive_sentiment_threshold: 0.25
   negative_sentiment_threshold: -0.25
-  fallback_when_apis_missing: neutral
-
+  fallback_when_apis_missing: unknown
+  block_when_macro_news_unavailable: true
+  block_btc_when_news_unavailable: false

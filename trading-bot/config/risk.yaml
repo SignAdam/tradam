@@ -1,5 +1,5 @@
 risk:
-  risk_per_trade_percent: 0.5
+  risk_per_trade_percent: 0.25
   max_risk_per_trade_percent: 0.5
   max_session_loss_percent: 1.5
   max_daily_loss_percent: 3.0
@@ -36,7 +36,44 @@ trade_management:
   trailing_stop_enabled: true
   trailing_atr_multiplier: 1.0
   break_even_enabled: true
-  break_even_after_r: 0.8
+  break_even_after_r: 0.7
+  tp1_close_percent: 0.60
+  tp1_r: 0.70
+  tp2_r: 1.35
+  risk_reduction_enabled: true
+  risk_reduction_after_r: 0.40
+  reduced_risk_r: 0.30
+  break_even_cost_buffer_points: 2
+  max_duration_seconds: 1800
   close_on_inverse_signal: true
   close_before_session_end: true
 
+exit_profiles:
+  XAUUSD:
+    Asian:
+      tp1_r: 0.65
+      tp2_r: 1.25
+      max_duration_seconds: 1200
+      max_stop_points: 1400
+    US:
+      tp1_r: 0.70
+      tp2_r: 1.35
+      max_duration_seconds: 1800
+      max_stop_points: 1800
+  BTC:
+    Asian:
+      tp1_r: 0.60
+      tp2_r: 1.20
+      max_duration_seconds: 1500
+      max_stop_points: 4000
+    US:
+      tp1_r: 0.75
+      tp2_r: 1.45
+      max_duration_seconds: 1800
+      max_stop_points: 5500
+  DJ30:
+    US:
+      tp1_r: 0.65
+      tp2_r: 1.25
+      max_duration_seconds: 1500
+      max_stop_points: 500

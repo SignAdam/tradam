@@ -120,10 +120,40 @@ Le backtest produit le nombre de trades, winrate, profit factor, drawdown max, e
 
 ## Rapports
 
-Generer un rapport exemple:
+Generer un rapport exemple fictif:
 
 ```bash
 python -m src.main --report-example
+```
+
+Generer un rapport reel depuis les trades, decisions et news deja stockes en SQLite:
+
+```bash
+python -m src.main --mode demo_live --session-report --report-session US
+```
+
+Generer un rapport reel apres reconciliation MT5:
+
+```bash
+python -m src.main --mode demo_live --session-report --reconcile-mt5 --report-session US
+```
+
+Par defaut, le rapport reel couvre la journee UTC en cours. Pour choisir une fenetre precise:
+
+```bash
+python -m src.main --mode demo_live --session-report --report-session US --report-start 2026-07-17T00:00:00+00:00 --report-end 2026-07-17T23:59:59+00:00
+```
+
+Migrer la base SQLite sans lancer le bot:
+
+```bash
+python -m src.main --migrate-only
+```
+
+Supprimer les anciens doublons `example-001` apres sauvegarde automatique:
+
+```bash
+python -m src.main --cleanup-example-fixtures
 ```
 
 Les rapports sont crees dans `reports/`:
@@ -133,6 +163,8 @@ Les rapports sont crees dans `reports/`:
 - JSON resume, utile pour une analyse externe ou ChatGPT.
 
 Chaque decision contient les raisons d'acceptation ou de refus, le score, les indicateurs, les news actives et le contexte de risque.
+
+Les rapports normaux excluent les fixtures (`is_fixture=false`) et filtrent par `mode`, `run_id`, `session_id` et plage temporelle quand ces valeurs sont fournies.
 
 ## Systeme de scoring
 
@@ -200,4 +232,3 @@ src/
 - Les news et le sentiment sont des filtres d'aide a la decision, pas une source de verite.
 
 Risque: le trading comporte un risque eleve de perte. Utilisez d'abord le mode `paper`, puis un compte demo. Ne tradez jamais en reel avec un bot non audite et non teste sur une longue periode.
-

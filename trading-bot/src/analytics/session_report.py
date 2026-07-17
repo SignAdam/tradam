@@ -10,24 +10,76 @@ from pathlib import Path
 from typing import Any
 
 from src.analytics.charts import equity_curve_svg
-from src.analytics.metrics import compute_trade_metrics, group_performance
+from src.analytics.metrics import compute_trade_metrics, group_performance, unique_trades
 from src.storage.database import Database
+from src.utils.security import redact_sensitive_data
 
 
 TRADE_EXPORT_FIELDS = [
+    "run_id",
+    "session_id",
+    "mode",
+    "internal_trade_id",
+    "mt5_position_id",
+    "mt5_order_ticket",
+    "mt5_deal_ticket",
     "symbol",
     "session",
+    "signal_time",
+    "order_time",
+    "execution_time",
     "entry_time",
     "exit_time",
     "direction",
     "lot",
+    "initial_volume",
+    "remaining_volume",
+    "requested_price",
     "entry_price",
+    "actual_entry_price",
+    "entry_slippage",
     "stop_loss",
+    "initial_stop_loss",
+    "final_stop_loss",
     "take_profit",
+    "tp1",
+    "tp1_close_percent",
+    "tp1_actual_price",
+    "tp1_pnl",
+    "tp2",
+    "tp2_actual_price",
+    "tp2_pnl",
     "exit_price",
     "pnl",
+    "pnl_gross",
+    "pnl_net",
+    "commission",
+    "swap",
+    "realized_r",
     "duration_seconds",
     "spread",
+    "spread_price",
+    "spread_points",
+    "estimated_spread_cost",
+    "initial_risk_price",
+    "initial_risk_amount",
+    "initial_risk_percent",
+    "sl_modification_count",
+    "break_even_applied",
+    "break_even_time",
+    "break_even_price",
+    "trailing_stop_enabled",
+    "max_favorable_price",
+    "max_adverse_price",
+    "mfe_price",
+    "mfe_amount",
+    "mfe_r",
+    "mae_price",
+    "mae_amount",
+    "mae_r",
+    "max_unrealized_profit",
+    "max_unrealized_loss",
+    "exit_reason",
     "timeframe",
     "h1_trend",
     "rsi",
@@ -66,14 +118,27 @@ class SessionReportGenerator:
         mode: str,
         symbols: list[str],
         config_snapshot: dict[str, Any],
+        run_id: str | None = None,
+        session_id: str | None = None,
+        include_fixtures: bool = False,
     ) -> dict[str, str]:
-        trades = self.database.fetch_trades_between(started_at, ended_at)
-        decisions = self.database.fetch_decisions_between(started_at, ended_at)
-        news = self.database.fetch_news_between(started_at, ended_at)
+        filters = {
+            "mode": mode,
+            "run_id": run_id,
+            "session_id": session_id,
+            "include_fixtures": include_fixtures,
+        }
+        trades = unique_trades(self.database.fetch_trades_between(started_at, ended_at, **filters))
+        decisions = self.database.fetch_decisions_between(started_at, ended_at, **filters)
+        news = self.database.fetch_news_between(started_at, ended_at, **filters)
+        events = self.database.fetch_position_events_between(started_at, ended_at, **filters)
+        news_health = self.database.fetch_news_provider_status_between(started_at, ended_at, **filters)
         metrics = compute_trade_metrics(trades)
         summary = {
             "date": started_at[:10],
             "session": session,
+            "run_id": run_id,
+            "session_id": session_id,
             "mode": mode,
             "started_at": started_at,
             "ended_at": ended_at,
@@ -87,10 +152,12 @@ class SessionReportGenerator:
             "refusal_reasons": self._refusal_reasons(decisions),
             "weak_points": self._weak_points(metrics, decisions),
             "improvement_suggestions": self._suggestions(metrics, decisions),
-            "trades": trades,
+            "trades": redact_sensitive_data(trades),
             "decisions": [self._decode_decision(decision) for decision in decisions],
-            "news": news,
-            "configuration": config_snapshot,
+            "news": redact_sensitive_data(news),
+            "position_events": redact_sensitive_data(events),
+            "news_provider_status": redact_sensitive_data(news_health),
+            "configuration": redact_sensitive_data(config_snapshot),
         }
 
         stamp = datetime.fromisoformat(started_at).strftime("%Y%m%d_%H%M%S")
@@ -108,8 +175,11 @@ class SessionReportGenerator:
             {
                 "started_at": started_at,
                 "ended_at": ended_at,
+                "run_id": run_id,
+                "session_id": session_id,
                 "session": session,
                 "mode": mode,
+                "is_fixture": include_fixtures,
                 "symbols": symbols,
                 "metrics": metrics,
                 "config": config_snapshot,
@@ -204,6 +274,31 @@ class SessionReportGenerator:
             "</tr>"
             for item in summary["news"]
         )
+        event_rows = "\n".join(
+            "<tr>"
+            f"<td>{escape(str(item.get('timestamp_utc')))}</td>"
+            f"<td>{escape(str(item.get('event_type')))}</td>"
+            f"<td>{escape(str(item.get('mt5_position_id') or item.get('internal_trade_id') or ''))}</td>"
+            f"<td>{escape(str(item.get('bid') or ''))}</td>"
+            f"<td>{escape(str(item.get('ask') or ''))}</td>"
+            f"<td>{escape(str(item.get('current_r') or ''))}</td>"
+            f"<td>{escape(str(item.get('new_stop_loss') or ''))}</td>"
+            f"<td>{escape(str(item.get('mt5_retcode') or ''))}</td>"
+            f"<td>{escape(str(item.get('error_message') or ''))}</td>"
+            "</tr>"
+            for item in summary["position_events"]
+        )
+        news_health_rows = "\n".join(
+            "<tr>"
+            f"<td>{escape(str(item.get('provider')))}</td>"
+            f"<td>{escape(str(item.get('status')))}</td>"
+            f"<td>{escape(str(item.get('article_count')))}</td>"
+            f"<td>{escape(str(item.get('event_count')))}</td>"
+            f"<td>{escape(str(item.get('last_success_utc') or ''))}</td>"
+            f"<td>{escape(str(item.get('error') or ''))}</td>"
+            "</tr>"
+            for item in summary["news_provider_status"]
+        )
         pnl_values = [float(trade.get("pnl") or 0) for trade in summary["trades"] if trade.get("pnl") is not None]
         chart = equity_curve_svg(pnl_values)
         weak_points = "".join(f"<li>{escape(item)}</li>" for item in summary["weak_points"])
@@ -226,7 +321,7 @@ class SessionReportGenerator:
 </head>
 <body>
   <h1>{escape(summary['session'])} Session Report</h1>
-  <p class="meta">{escape(summary['started_at'])} to {escape(summary['ended_at'])} | mode: {escape(summary['mode'])}</p>
+  <p class="meta">{escape(summary['started_at'])} to {escape(summary['ended_at'])} | mode: {escape(summary['mode'])} | run: {escape(str(summary.get('run_id') or ''))} | session_id: {escape(str(summary.get('session_id') or ''))}</p>
   <div class="grid">
     <section>
       <h2>Metrics</h2>
@@ -247,7 +342,10 @@ class SessionReportGenerator:
   <table><thead><tr><th>time</th><th>symbol</th><th>direction</th><th>score</th><th>decision</th><th>reasons</th><th>rejected reason</th></tr></thead><tbody>{decision_rows}</tbody></table>
   <h2>News Used</h2>
   <table><thead><tr><th>published</th><th>symbol</th><th>impact</th><th>sentiment</th><th>title</th></tr></thead><tbody>{news_rows}</tbody></table>
+  <h2>News Provider Health</h2>
+  <table><thead><tr><th>provider</th><th>status</th><th>articles</th><th>events</th><th>last success</th><th>error</th></tr></thead><tbody>{news_health_rows}</tbody></table>
+  <h2>Position Events</h2>
+  <table><thead><tr><th>time UTC</th><th>event</th><th>position</th><th>bid</th><th>ask</th><th>R</th><th>new SL</th><th>retcode</th><th>error</th></tr></thead><tbody>{event_rows}</tbody></table>
 </body>
 </html>
 """
-

@@ -29,6 +29,21 @@ class NewsArticle:
         return asdict(self)
 
 
+@dataclass
+class ProviderHealth:
+    provider: str
+    status: str
+    last_request_utc: str
+    last_success_utc: str | None = None
+    article_count: int = 0
+    event_count: int = 0
+    error: str | None = None
+    freshness_seconds: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 class NewsClient:
     def __init__(
         self,
@@ -43,8 +58,10 @@ class NewsClient:
             positive_threshold=float(self.config.get("positive_sentiment_threshold", 0.25)),
             negative_threshold=float(self.config.get("negative_sentiment_threshold", -0.25)),
         )
+        self.provider_health: list[ProviderHealth] = []
 
     def fetch_for_symbol(self, symbol_group: str, queries: list[str], limit: int = 20) -> list[NewsArticle]:
+        self.provider_health = []
         articles: list[NewsArticle] = []
         for query in queries[:5]:
             articles.extend(self._marketaux(symbol_group, query))
@@ -67,16 +84,19 @@ class NewsClient:
             return None
 
     def _marketaux(self, symbol_group: str, query: str) -> list[NewsArticle]:
+        request_time = datetime.now(timezone.utc).isoformat()
         token = os.getenv("MARKETAUX_API_KEY")
         if not token:
+            self._health("Marketaux", "NOT_CONFIGURED", request_time)
             return []
         data = self._get_json(
             "https://api.marketaux.com/v1/news/all",
             {"api_token": token, "search": query, "language": "en", "limit": 5},
         )
         if not data:
+            self._health("Marketaux", "UNAVAILABLE", request_time, error="No usable response")
             return []
-        return [
+        articles = [
             self._article(
                 symbol_group,
                 title=item.get("title", ""),
@@ -89,18 +109,23 @@ class NewsClient:
             for item in data.get("data", [])
             if item.get("title")
         ]
+        self._health("Marketaux", "HEALTHY" if articles else "EMPTY_VALID_RESPONSE", request_time, request_time, len(articles))
+        return articles
 
     def _newsapi(self, symbol_group: str, query: str) -> list[NewsArticle]:
+        request_time = datetime.now(timezone.utc).isoformat()
         token = os.getenv("NEWSAPI_API_KEY")
         if not token:
+            self._health("NewsAPI", "NOT_CONFIGURED", request_time)
             return []
         data = self._get_json(
             "https://newsapi.org/v2/everything",
             {"apiKey": token, "q": query, "language": "en", "pageSize": 5, "sortBy": "publishedAt"},
         )
         if not data:
+            self._health("NewsAPI", "UNAVAILABLE", request_time, error="No usable response")
             return []
-        return [
+        articles = [
             self._article(
                 symbol_group,
                 title=item.get("title", ""),
@@ -113,16 +138,21 @@ class NewsClient:
             for item in data.get("articles", [])
             if item.get("title")
         ]
+        self._health("NewsAPI", "HEALTHY" if articles else "EMPTY_VALID_RESPONSE", request_time, request_time, len(articles))
+        return articles
 
     def _alpha_vantage(self, symbol_group: str, queries: list[str]) -> list[NewsArticle]:
+        request_time = datetime.now(timezone.utc).isoformat()
         token = os.getenv("ALPHA_VANTAGE_API_KEY")
         if not token:
+            self._health("Alpha Vantage", "NOT_CONFIGURED", request_time)
             return []
         data = self._get_json(
             "https://www.alphavantage.co/query",
             {"function": "NEWS_SENTIMENT", "apikey": token, "topics": "financial_markets", "limit": 20},
         )
         if not data:
+            self._health("Alpha Vantage", "UNAVAILABLE", request_time, error="No usable response")
             return []
         results: list[NewsArticle] = []
         for item in data.get("feed", []):
@@ -146,14 +176,18 @@ class NewsClient:
                     raw=item,
                 )
             )
+        self._health("Alpha Vantage", "HEALTHY" if results else "EMPTY_VALID_RESPONSE", request_time, request_time, len(results))
         return results
 
     def _finnhub(self, symbol_group: str) -> list[NewsArticle]:
+        request_time = datetime.now(timezone.utc).isoformat()
         token = os.getenv("FINNHUB_API_KEY")
         if not token:
+            self._health("Finnhub", "NOT_CONFIGURED", request_time)
             return []
         data = self._get_json("https://finnhub.io/api/v1/news", {"category": "general", "token": token})
         if not isinstance(data, list):
+            self._health("Finnhub", "UNAVAILABLE", request_time, error="No usable response")
             return []
         keywords = {
             "XAUUSD": ["gold", "fed", "inflation", "cpi", "usd"],
@@ -179,16 +213,19 @@ class NewsClient:
                     raw=item,
                 )
             )
+        self._health("Finnhub", "HEALTHY" if results else "EMPTY_VALID_RESPONSE", request_time, request_time, len(results))
         return results
 
     def _binance_context(self, symbol_group: str) -> list[NewsArticle]:
+        request_time = datetime.now(timezone.utc).isoformat()
         data = self._get_json("https://api.binance.com/api/v3/ticker/24hr", {"symbol": "BTCUSDT"})
         if not data:
+            self._health("Binance public API", "UNAVAILABLE", request_time, error="No usable response")
             return []
         change = _float_or_none(data.get("priceChangePercent")) or 0.0
         title = f"BTCUSDT 24h change {change:.2f}% on Binance public ticker"
         provider_score = max(min(change / 10, 1), -1)
-        return [
+        articles = [
             self._article(
                 symbol_group,
                 title=title,
@@ -199,6 +236,8 @@ class NewsClient:
                 raw=data,
             )
         ]
+        self._health("Binance public API", "HEALTHY", request_time, request_time, len(articles))
+        return articles
 
     def _article(
         self,
@@ -236,6 +275,26 @@ class NewsClient:
             seen.add(key)
             deduped.append(article)
         return sorted(deduped, key=lambda item: item.published_at, reverse=True)
+
+    def _health(
+        self,
+        provider: str,
+        status: str,
+        last_request_utc: str,
+        last_success_utc: str | None = None,
+        article_count: int = 0,
+        error: str | None = None,
+    ) -> None:
+        self.provider_health.append(
+            ProviderHealth(
+                provider=provider,
+                status=status,
+                last_request_utc=last_request_utc,
+                last_success_utc=last_success_utc,
+                article_count=article_count,
+                error=error,
+            )
+        )
 
 
 def _float_or_none(value: Any) -> float | None:

@@ -154,6 +154,17 @@ class OrderManager:
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": mt5.ORDER_FILLING_IOC,
         }
+        check = mt5.order_check(payload)
+        if check is not None:
+            check_data = check._asdict() if hasattr(check, "_asdict") else dict(check)
+            ok_retcodes = {
+                0,
+                getattr(mt5, "TRADE_RETCODE_DONE", None),
+                getattr(mt5, "TRADE_RETCODE_PLACED", None),
+                getattr(mt5, "TRADE_RETCODE_DONE_PARTIAL", None),
+            }
+            if check_data.get("retcode") not in ok_retcodes:
+                raise BrokerValidationError(f"MT5 order_check rejected request: {check_data}")
         result = mt5.order_send(payload)
         if result is None:
             raise BrokerValidationError(f"MT5 order_send returned None: {mt5.last_error()}")
